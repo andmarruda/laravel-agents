@@ -7,7 +7,9 @@ Laravel Agents should grow as a small core plus optional capabilities. The packa
 ```txt
 src/
   Agents/       Application-facing agent abstractions.
+  Kernel/       Capability entry points used by apps and tools.
   Models/       Model routing and provider selection.
+  Images/       Image capability routing.
   Ports/        Stable contracts required by the core.
   Adapters/     Infrastructure implementations of ports.
   Data/         Small immutable response objects.
@@ -20,10 +22,15 @@ src/
 The core depends on ports, never directly on provider SDKs or HTTP details.
 
 - `Ports\ModelPort` is the model-generation port.
+- `Ports\ImageGenerationPort` is the image-generation port.
+- `Ports\CapabilityPort` is the shared base for executable capabilities.
 - `Adapters\Models\OpenAiModelAdapter` implements OpenAI chat completions.
 - `Adapters\Models\AnthropicModelAdapter` implements Claude messages.
 - `Adapters\Models\FireworksModelAdapter` implements Fireworks chat completions.
+- `Adapters\Images\OpenAiImageAdapter` implements OpenAI image generations.
 - `Models\ModelRouter` is the composition boundary that chooses the adapter for a `provider/model` name.
+- `Images\ImageRouter` is the composition boundary for image models.
+- `Kernel\AgentKernel` exposes capabilities such as text and image without forcing agents to treat every execution as chat text.
 
 Adapters can change, split, or gain SDK-specific details without forcing changes into `Agent`, `SupervisorAgent`, workflows, memory, or guardrails.
 

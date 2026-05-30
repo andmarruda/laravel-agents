@@ -53,6 +53,9 @@ AGENTS_DEFAULT_MODEL=openai/gpt-4.1-mini
 AGENTS_MODEL_TIMEOUT=60
 AGENTS_MODEL_RETRY_TIMES=2
 AGENTS_MODEL_RETRY_SLEEP=250
+AGENTS_IMAGE_MODEL=openai/gpt-image-1
+AGENTS_IMAGE_SIZE=1024x1024
+AGENTS_IMAGE_DISK=public
 
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -79,6 +82,24 @@ Model name examples:
 LaravelAgents::model('openai/gpt-4.1-mini');
 LaravelAgents::model('anthropic/claude-sonnet-4');
 LaravelAgents::model('fireworks/accounts/fireworks/models/llama-v3p1-70b-instruct');
+```
+
+## 2.1. Generating Images
+
+Images are treated as a capability, not as plain text output.
+
+```php
+use Andmarruda\LaravelAgents\Data\ImageGenerationRequest;
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+
+$response = LaravelAgents::image('openai/gpt-image-1')
+    ->generate(new ImageGenerationRequest(
+        prompt: 'A clean Laravel agent orchestration diagram',
+        size: '1024x1024',
+    ));
+
+$url = $response->firstUrl();
+$base64 = $response->firstBase64();
 ```
 
 ## 3. Creating A Worker Agent
@@ -252,13 +273,24 @@ $this->options([
 
 The options `timeout`, `retry_times`, and `retry_sleep` are treated as runtime config and are not sent in the model payload.
 
+## 8.1. Executing Tools
+
+Agents with tools can request a real action by returning strict JSON:
+
+```json
+{"action":"tool","tool":"generate_image","input":{"prompt":"A launch post image","size":"1024x1024"}}
+```
+
+The agent executes the tool, injects the result into the next model call, and continues until it returns a normal final answer or reaches the tool-step limit.
+
 ## 9. Architecture
 
 The package uses Ports & Adapters for model providers:
 
-- port: `Andmarruda\LaravelAgents\Ports\ModelPort`;
+- text port: `Andmarruda\LaravelAgents\Ports\ModelPort`;
+- image port: `Andmarruda\LaravelAgents\Ports\ImageGenerationPort`;
 - adapters: `OpenAiModelAdapter`, `AnthropicModelAdapter`, `FireworksModelAdapter`;
-- composition: `ModelRouter`.
+- composition: `ModelRouter`, `ImageRouter`, and `AgentKernel`.
 
 The rest of the package should evolve through small modules:
 
@@ -277,8 +309,7 @@ Read also: [../architecture/evolutionary-architecture.md](../architecture/evolut
 - There is no persistent memory.
 - There are no workflows.
 - There is no streaming.
-- Tool-call execution is not automatic yet.
-- There is no fake provider for tests yet.
+- Image generation ships with an OpenAI adapter in this first version.
 - The supervisor depends on valid JSON from the model.
 
 The goal now is to test the core ergonomics inside a real Laravel project before adding heavier modules.

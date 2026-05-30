@@ -53,6 +53,9 @@ AGENTS_DEFAULT_MODEL=openai/gpt-4.1-mini
 AGENTS_MODEL_TIMEOUT=60
 AGENTS_MODEL_RETRY_TIMES=2
 AGENTS_MODEL_RETRY_SLEEP=250
+AGENTS_IMAGE_MODEL=openai/gpt-image-1
+AGENTS_IMAGE_SIZE=1024x1024
+AGENTS_IMAGE_DISK=public
 
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -79,6 +82,24 @@ Exemplos de nomes de modelos:
 LaravelAgents::model('openai/gpt-4.1-mini');
 LaravelAgents::model('anthropic/claude-sonnet-4');
 LaravelAgents::model('fireworks/accounts/fireworks/models/llama-v3p1-70b-instruct');
+```
+
+## 2.1. Gerando Imagens
+
+Imagem é tratada como capability, não como resposta de texto.
+
+```php
+use Andmarruda\LaravelAgents\Data\ImageGenerationRequest;
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+
+$response = LaravelAgents::image('openai/gpt-image-1')
+    ->generate(new ImageGenerationRequest(
+        prompt: 'Um diagrama limpo de orquestração de agentes em Laravel',
+        size: '1024x1024',
+    ));
+
+$url = $response->firstUrl();
+$base64 = $response->firstBase64();
 ```
 
 ## 3. Criando Um Worker Agent
@@ -252,13 +273,24 @@ $this->options([
 
 As opções `timeout`, `retry_times` e `retry_sleep` são tratadas como runtime config e não são enviadas no payload do modelo.
 
+## 8.1. Executando Tools
+
+Agentes com tools podem pedir uma ação real retornando JSON estrito:
+
+```json
+{"action":"tool","tool":"generate_image","input":{"prompt":"Imagem para post de lançamento","size":"1024x1024"}}
+```
+
+O agent executa a tool, injeta o resultado na próxima chamada do modelo e continua até gerar uma resposta final normal ou atingir o limite de tool steps.
+
 ## 9. Arquitetura
 
 O pacote usa Ports & Adapters para provedores de modelo:
 
-- porta: `Andmarruda\LaravelAgents\Ports\ModelPort`;
+- porta de texto: `Andmarruda\LaravelAgents\Ports\ModelPort`;
+- porta de imagem: `Andmarruda\LaravelAgents\Ports\ImageGenerationPort`;
 - adapters: `OpenAiModelAdapter`, `AnthropicModelAdapter`, `FireworksModelAdapter`;
-- composição: `ModelRouter`.
+- composição: `ModelRouter`, `ImageRouter` e `AgentKernel`.
 
 O resto do pacote deve evoluir por módulos pequenos:
 
@@ -277,8 +309,7 @@ Leia também: [../architecture/evolutionary-architecture.md](../architecture/evo
 - Não há memory persistente.
 - Não há workflows.
 - Não há streaming.
-- Não há execução automática de tool calls.
-- Não há fake provider para testes.
+- Imagem tem adapter OpenAI nesta primeira versão.
 - O supervisor depende de JSON válido vindo do modelo.
 
 O objetivo agora é testar a ergonomia do core em um projeto Laravel real antes de adicionar os módulos mais pesados.

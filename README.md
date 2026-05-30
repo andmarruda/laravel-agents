@@ -1,6 +1,6 @@
 # Laravel Agents
 
-Laravel-native AI agents inspired by Mastra, built around a small core: model routing, worker agents, supervisor orchestration, and provider adapters.
+Laravel-native AI agents inspired by Mastra, built around a small multimodal kernel: model routing, image generation, worker agents, supervisor orchestration, tools, and provider adapters.
 
 This package is in early alpha. The current implementation is intentionally focused on the first useful slice: running agents and letting a supervisor agent decide which worker should act next.
 
@@ -8,10 +8,12 @@ This package is in early alpha. The current implementation is intentionally focu
 
 - Model routing with `provider/model` names.
 - OpenAI, Anthropic/Claude, and Fireworks AI model adapters.
+- Image generation routing with an OpenAI image adapter.
+- A small `AgentKernel` for text and image capabilities.
 - Worker agents using the base `Agent` class.
 - Manager-style orchestration using `SupervisorAgent`.
 - Basic `AgentResponse` metadata and supervisor step history.
-- Tool definitions via a `Tool` contract and `ToolBag`.
+- Tool definitions and JSON-based tool execution loops.
 - Ports & Adapters boundary for model providers.
 - Laravel package auto-discovery and publishable config.
 
@@ -70,6 +72,9 @@ AGENTS_DEFAULT_MODEL=openai/gpt-4.1-mini
 AGENTS_MODEL_TIMEOUT=60
 AGENTS_MODEL_RETRY_TIMES=2
 AGENTS_MODEL_RETRY_SLEEP=250
+AGENTS_IMAGE_MODEL=openai/gpt-image-1
+AGENTS_IMAGE_SIZE=1024x1024
+AGENTS_IMAGE_DISK=public
 
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -91,6 +96,32 @@ The model router depends on the `ModelPort` interface. Provider integrations liv
 - `OpenAiModelAdapter`
 - `AnthropicModelAdapter`
 - `FireworksModelAdapter`
+
+## Image Generation
+
+Image generation is exposed as a capability instead of pretending images are just text:
+
+```php
+use Andmarruda\LaravelAgents\Data\ImageGenerationRequest;
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+
+$response = LaravelAgents::image('openai/gpt-image-1')
+    ->generate(new ImageGenerationRequest(
+        prompt: 'A clean Laravel agent orchestration diagram',
+        size: '1024x1024',
+    ));
+
+$url = $response->firstUrl();
+$base64 = $response->firstBase64();
+```
+
+You can also go through the kernel:
+
+```php
+$image = LaravelAgents::kernel()
+    ->image()
+    ->generate(new ImageGenerationRequest(prompt: 'A product launch illustration'));
+```
 
 ## Worker Agent
 
@@ -198,13 +229,22 @@ $response = LaravelAgents::agent(ResearchAgent::class)
 
 For supervisor runs, context is also passed down to worker agents along with `previous_steps`.
 
+## Tool Execution
+
+Agents with tools can ask the kernel to execute a real action by returning strict JSON:
+
+```json
+{"action":"tool","tool":"generate_image","input":{"prompt":"A launch post image","size":"1024x1024"}}
+```
+
+The agent executes the tool, injects the tool result into the next model call, and then continues until it returns a normal final answer or reaches the tool-step limit.
+
 ## Current Limitations
 
-- Tool schemas can be attached to prompts, but automatic tool-call execution is not implemented yet.
 - Memory is not persisted yet.
 - Workflows are not implemented yet.
 - Streaming is not implemented yet.
-- There is no fake provider test helper yet.
+- Image generation currently ships with an OpenAI adapter only.
 - Supervisor decisions rely on the model returning valid JSON.
 
 These are deliberate alpha constraints. The current core is meant to validate the package shape inside a real Laravel project before adding heavier modules.
@@ -217,7 +257,7 @@ Run the automated test suite:
 composer test
 ```
 
-The initial suite covers model routing, DTOs, tools, worker agents, and supervisor orchestration without calling external AI APIs.
+The initial suite covers model routing, image routing, DTOs, tools, worker agents, kernel capability routing, and supervisor orchestration without calling external AI APIs.
 
 ## Documentation
 

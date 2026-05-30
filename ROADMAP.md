@@ -7,9 +7,11 @@ Goal: make manager/worker agent orchestration usable in Laravel apps.
 - Package skeleton with Laravel auto-discovery.
 - Model router using `provider/model` names.
 - `ModelPort` plus adapters for OpenAI, Anthropic/Claude, and Fireworks.
+- `ImageGenerationPort` plus OpenAI image adapter.
+- `AgentKernel` for capability routing.
 - Base `Agent` class.
 - `SupervisorAgent` that delegates to workers or returns a final answer.
-- Tool contract and `ToolBag`.
+- Tool contract, `ToolBag`, and JSON-based tool execution loop.
 - Basic run metadata in `AgentResponse`.
 
 ## v0.2 Memory
