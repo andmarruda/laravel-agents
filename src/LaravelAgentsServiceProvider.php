@@ -2,8 +2,10 @@
 
 namespace Andmarruda\LaravelAgents;
 
-use Illuminate\Support\ServiceProvider;
+use Andmarruda\LaravelAgents\Images\ImageRouter;
+use Andmarruda\LaravelAgents\Kernel\AgentKernel;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
+use Illuminate\Support\ServiceProvider;
 
 class LaravelAgentsServiceProvider extends ServiceProvider
 {
@@ -15,8 +17,23 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             return new ModelRouter($app['config']->get('agents', []));
         });
 
+        $this->app->singleton(ImageRouter::class, function ($app) {
+            return new ImageRouter($app['config']->get('agents', []));
+        });
+
+        $this->app->singleton(AgentKernel::class, function ($app) {
+            return new AgentKernel(
+                $app->make(ModelRouter::class),
+                $app->make(ImageRouter::class),
+            );
+        });
+
         $this->app->singleton(LaravelAgentsManager::class, function ($app) {
-            return new LaravelAgentsManager($app->make(ModelRouter::class));
+            return new LaravelAgentsManager(
+                $app->make(ModelRouter::class),
+                $app->make(ImageRouter::class),
+                $app->make(AgentKernel::class),
+            );
         });
     }
 

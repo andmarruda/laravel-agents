@@ -3,19 +3,34 @@
 namespace Andmarruda\LaravelAgents;
 
 use Andmarruda\LaravelAgents\Agents\Agent;
+use Andmarruda\LaravelAgents\Images\ImageRouter;
+use Andmarruda\LaravelAgents\Kernel\AgentKernel;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
+use Andmarruda\LaravelAgents\Ports\ImageGenerationPort;
 use Andmarruda\LaravelAgents\Ports\ModelPort;
 
 class LaravelAgentsManager
 {
     public function __construct(
         protected ModelRouter $models,
+        protected ImageRouter $images,
+        protected AgentKernel $kernel,
     ) {
+    }
+
+    public function kernel(): AgentKernel
+    {
+        return $this->kernel;
     }
 
     public function model(string $model): ModelPort
     {
         return $this->models->for($model);
+    }
+
+    public function image(?string $model = null): ImageGenerationPort
+    {
+        return $this->images->for($model);
     }
 
     /**

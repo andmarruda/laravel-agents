@@ -20,7 +20,9 @@ class ModelRouter
 
     public function for(?string $model = null): ModelPort
     {
-        $model ??= $this->config['default_model'] ?? 'openai/gpt-4.1-mini';
+        $model ??= $this->config['capabilities']['text']['default_model']
+            ?? $this->config['default_model']
+            ?? 'openai/gpt-4.1-mini';
 
         [$provider, $modelName] = $this->parseModel($model);
 

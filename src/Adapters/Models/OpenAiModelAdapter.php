@@ -22,6 +22,11 @@ class OpenAiModelAdapter implements ModelPort
     ) {
     }
 
+    public function capability(): string
+    {
+        return 'text.generate';
+    }
+
     public function generate(array $messages, array $options = []): ModelResponse
     {
         $apiKey = $this->config['api_key'] ?? null;
