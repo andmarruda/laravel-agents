@@ -1,0 +1,40 @@
+{
+    "name": "andmarruda/laravel-agents",
+    "description": "Laravel-native AI agents, supervisor orchestration, tools, and model routing.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Andmarruda\\LaravelAgents\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Andmarruda\\LaravelAgents\\Tests\\": "tests/"
+        }
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/contracts": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5|^11.0|^12.0"
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Andmarruda\\LaravelAgents\\LaravelAgentsServiceProvider"
+            ],
+            "aliases": {
+                "LaravelAgents": "Andmarruda\\LaravelAgents\\Facades\\LaravelAgents"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
