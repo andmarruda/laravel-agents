@@ -15,7 +15,10 @@ class ModelRouterTest extends TestCase
     {
         $router = new ModelRouter($this->config());
 
-        $this->assertInstanceOf(OpenAiModelAdapter::class, $router->for('openai/gpt-4.1-mini'));
+        $model = $router->for('openai/gpt-4.1-mini');
+
+        $this->assertInstanceOf(OpenAiModelAdapter::class, $model);
+        $this->assertSame('text.generate', $model->capability());
     }
 
     public function test_it_resolves_anthropic_models(): void

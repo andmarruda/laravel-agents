@@ -25,6 +25,11 @@ class FakeModelPort implements ModelPort
     ) {
     }
 
+    public function capability(): string
+    {
+        return 'text.generate';
+    }
+
     public function generate(array $messages, array $options = []): ModelResponse
     {
         $this->messages[] = $messages;
