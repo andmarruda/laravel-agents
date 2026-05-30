@@ -8,12 +8,26 @@ use Andmarruda\LaravelAgents\Data\AgentResponse;
 abstract class SupervisorAgent extends Agent
 {
     /**
+     * The agents that the supervisor can delegate tasks to, keyed by their name.
+     * 
      * @var array<string, Agent>
      */
     protected array $agents = [];
 
+    /**
+     * The maximum number of steps the supervisor will take before finalizing an answer.
+     * 
+     * @var int
+     */
     protected int $maxSteps = 12;
 
+    /**
+     * Generates a response for the given input by iteratively deciding whether to delegate to an agent or finalize an answer.
+     * 
+     * @param string $input The initial task or question to be addressed by the supervisor and its agents.
+     * @param array<string, mixed> $context Additional context that can be used in decision making and passed to agents.
+     * @return AgentResponse
+     */
     public function generate(string $input, array $context = []): AgentResponse
     {
         $this->bootAgent();
@@ -25,7 +39,7 @@ abstract class SupervisorAgent extends Agent
             $action = $decision['action'] ?? null;
 
             if ($action === 'final') {
-                return new AgentResponse($decision['answer'] ?? '', $steps, [
+                return new AgentResponse($this->normalizeFinalAnswer($decision['answer'] ?? ''), $steps, [
                     'agent' => $this->name(),
                     'steps' => count($steps),
                 ]);
@@ -159,5 +173,18 @@ abstract class SupervisorAgent extends Agent
                 'task' => $input,
                 'steps' => $steps,
             ], JSON_UNESCAPED_SLASHES);
+    }
+
+    protected function normalizeFinalAnswer(mixed $answer): string
+    {
+        if (is_string($answer)) {
+            return $answer;
+        }
+
+        if (is_scalar($answer) || $answer === null) {
+            return (string) $answer;
+        }
+
+        return json_encode($answer, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) ?: '';
     }
 }
