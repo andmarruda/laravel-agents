@@ -19,7 +19,6 @@ This package is in early alpha. The current implementation is intentionally focu
 
 ## Planned Next
 
-- Persistent memory.
 - Deterministic workflows.
 - MCP client/server support.
 - Observability, traces, and usage tracking.
@@ -241,7 +240,6 @@ The agent executes the tool, injects the tool result into the next model call, a
 
 ## Current Limitations
 
-- Memory is not persisted yet.
 - Workflows are not implemented yet.
 - Streaming is not implemented yet.
 - Image generation currently ships with an OpenAI adapter only.
@@ -263,5 +261,13 @@ The initial suite covers model routing, image routing, DTOs, tools, worker agent
 
 - Portuguese usage guide: [docs/usage/pt-BR.md](docs/usage/pt-BR.md)
 - English usage guide: [docs/usage/en.md](docs/usage/en.md)
+- Memory (English): [docs/usage/memory-en.md](docs/usage/memory-en.md)
+- Memory (Português): [docs/usage/memory-pt-BR.md](docs/usage/memory-pt-BR.md)
 - Architecture notes: [docs/architecture/evolutionary-architecture.md](docs/architecture/evolutionary-architecture.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
+
+## Support This Project
+
+Laravel Agents is open-source and free to use. If this package saves you time, helps you ship faster, or simply sparks an idea, consider buying a coffee — it keeps the project alive and motivates new features, adapters, and documentation.
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/andmarruda)

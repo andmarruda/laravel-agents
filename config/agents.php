@@ -42,4 +42,17 @@ return [
     'supervisor' => [
         'max_steps' => (int) env('AGENTS_SUPERVISOR_MAX_STEPS', 12),
     ],
+
+    'memory' => [
+        'short_term' => [
+            'connection' => env('AGENTS_REDIS_CONNECTION', 'default'),
+            'prefix' => env('AGENTS_MEMORY_PREFIX', 'agents:session:'),
+            'default_ttl' => (int) env('AGENTS_MEMORY_TTL', 3600),
+        ],
+
+        'long_term' => [
+            'connection' => env('AGENTS_DB_CONNECTION'),
+            'table' => env('AGENTS_MEMORY_TABLE', 'agent_memories'),
+        ],
+    ],
 ];

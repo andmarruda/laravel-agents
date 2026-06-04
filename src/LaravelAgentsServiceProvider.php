@@ -2,8 +2,12 @@
 
 namespace Andmarruda\LaravelAgents;
 
+use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
+use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Images\ImageRouter;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
+use Andmarruda\LaravelAgents\Memory\DatabaseLongTermAdapter;
+use Andmarruda\LaravelAgents\Memory\RedisShortTermAdapter;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Illuminate\Support\ServiceProvider;
 
@@ -35,6 +39,26 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $app->make(AgentKernel::class),
             );
         });
+
+        $this->app->singleton(ShortTermMemory::class, function ($app) {
+            $connection = $app['redis']->connection(
+                $app['config']->get('agents.memory.short_term.connection', 'default')
+            );
+
+            return new RedisShortTermAdapter(
+                $connection,
+                $app['config']->get('agents.memory.short_term.prefix', 'agents:session:'),
+            );
+        });
+
+        $this->app->singleton(LongTermMemory::class, function ($app) {
+            return new DatabaseLongTermAdapter(
+                $app['db']->connection(
+                    $app['config']->get('agents.memory.long_term.connection')
+                ),
+                $app['config']->get('agents.memory.long_term.table', 'agent_memories'),
+            );
+        });
     }
 
     public function boot(): void
@@ -42,5 +66,11 @@ class LaravelAgentsServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/agents.php' => config_path('agents.php'),
         ], 'agents-config');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/create_agent_memories_table.php' => database_path(
+                'migrations/'.date('Y_m_d_His').'_create_agent_memories_table.php'
+            ),
+        ], 'agents-migrations');
     }
 }

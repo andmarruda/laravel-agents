@@ -12,6 +12,7 @@ class AgentResponse
         public readonly string $content,
         public readonly array $steps = [],
         public readonly array $meta = [],
+        public readonly ?string $sessionId = null,
     ) {
     }
 }

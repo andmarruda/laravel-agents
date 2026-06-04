@@ -2,10 +2,13 @@
 
 namespace Andmarruda\LaravelAgents\Agents;
 
+use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
+use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Tool;
 use Andmarruda\LaravelAgents\Data\AgentResponse;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Andmarruda\LaravelAgents\Tools\ToolBag;
+use Illuminate\Support\Str;
 
 abstract class Agent
 {
@@ -29,6 +32,14 @@ abstract class Agent
     protected bool $configured = false;
 
     protected int $maxToolSteps = 4;
+
+    protected bool $shortTermMemoryEnabled = false;
+
+    protected bool $longTermMemoryEnabled = false;
+
+    protected int $memoryTtlSeconds = 3600;
+
+    protected ?string $sessionId = null;
 
     public function __construct()
     {
@@ -54,10 +65,24 @@ abstract class Agent
         return $this;
     }
 
+    public function continueSession(string $sessionId): static
+    {
+        $this->sessionId = $sessionId;
+        $this->shortTermMemoryEnabled = true;
+
+        return $this;
+    }
+
     public function generate(string $input, array $context = []): AgentResponse
     {
         $this->bootAgent();
-        $messages = $this->messages($input, $context);
+
+        if ($this->shortTermMemoryEnabled && $this->sessionId === null) {
+            $this->sessionId = (string) Str::uuid();
+        }
+
+        $history = $this->loadShortTermHistory();
+        $messages = $this->messages($input, $context, $history);
         $steps = [];
 
         for ($step = 1; $step <= $this->maxToolSteps + 1; $step++) {
@@ -68,13 +93,15 @@ abstract class Agent
             $toolCall = $this->parseToolCall($response->json());
 
             if (! $toolCall) {
+                $this->appendToShortTermMemory($input, $response->content);
+
                 return new AgentResponse($response->content, $steps, [
                     'agent' => $this->name(),
                     'model' => $response->model,
                     'provider' => $response->provider,
                     'usage' => $response->usage,
                     'tool_steps' => count($steps),
-                ]);
+                ], $this->sessionId);
             }
 
             $tool = $this->tools->get($toolCall['tool']);
@@ -94,6 +121,8 @@ abstract class Agent
             ];
         }
 
+        $this->appendToShortTermMemory($input, $response->content);
+
         return new AgentResponse($response->content, $steps, [
             'agent' => $this->name(),
             'model' => $response->model,
@@ -101,7 +130,25 @@ abstract class Agent
             'usage' => $response->usage,
             'tool_steps' => count($steps),
             'max_tool_steps_reached' => true,
-        ]);
+        ], $this->sessionId);
+    }
+
+    public function remember(string $scope, string $key, mixed $value): void
+    {
+        app(LongTermMemory::class)->store($this->name(), $scope, $key, $value);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function recall(string $scope, ?string $key = null): array
+    {
+        return app(LongTermMemory::class)->retrieve($this->name(), $scope, $key);
+    }
+
+    public function forget(string $scope, ?string $key = null): void
+    {
+        app(LongTermMemory::class)->forget($this->name(), $scope, $key);
     }
 
     public function name(): string
@@ -174,11 +221,33 @@ abstract class Agent
         return $this;
     }
 
+    protected function enableShortTermMemory(): static
+    {
+        $this->shortTermMemoryEnabled = true;
+
+        return $this;
+    }
+
+    protected function enableLongTermMemory(): static
+    {
+        $this->longTermMemoryEnabled = true;
+
+        return $this;
+    }
+
+    protected function memoryTtl(int $seconds): static
+    {
+        $this->memoryTtlSeconds = $seconds;
+
+        return $this;
+    }
+
     /**
+     * @param array<int, array{role: string, content: string}> $history
      * @param array<string, mixed> $context
      * @return array<int, array{role: string, content: string}>
      */
-    protected function messages(string $input, array $context = []): array
+    protected function messages(string $input, array $context = [], array $history = []): array
     {
         $system = trim(implode("\n\n", array_filter([
             $this->instructions,
@@ -188,10 +257,11 @@ abstract class Agent
             $context === [] ? null : 'Context: '.json_encode($context, JSON_UNESCAPED_SLASHES),
         ])));
 
-        return array_values(array_filter([
+        $base = array_values(array_filter([
             $system === '' ? null : ['role' => 'system', 'content' => $system],
-            ['role' => 'user', 'content' => $input],
         ]));
+
+        return array_merge($base, $history, [['role' => 'user', 'content' => $input]]);
     }
 
     protected function modelRouter(): ModelRouter
@@ -232,5 +302,30 @@ abstract class Agent
         }
 
         return json_decode(json_encode($result, JSON_UNESCAPED_SLASHES) ?: 'null', true);
+    }
+
+    /**
+     * @return array<int, array{role: string, content: string}>
+     */
+    private function loadShortTermHistory(): array
+    {
+        if (! $this->shortTermMemoryEnabled || $this->sessionId === null) {
+            return [];
+        }
+
+        return app(ShortTermMemory::class)->messages($this->sessionId);
+    }
+
+    private function appendToShortTermMemory(string $userInput, string $assistantContent): void
+    {
+        if (! $this->shortTermMemoryEnabled || $this->sessionId === null) {
+            return;
+        }
+
+        $memory = app(ShortTermMemory::class);
+        $ttl = $this->memoryTtlSeconds;
+
+        $memory->append($this->sessionId, ['role' => 'user', 'content' => $userInput], $ttl);
+        $memory->append($this->sessionId, ['role' => 'assistant', 'content' => $assistantContent], $ttl);
     }
 }
