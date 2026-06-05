@@ -29,12 +29,14 @@ Goal: persistent context and thread-aware agents.
 
 Goal: deterministic process orchestration when agentic routing is too open-ended.
 
-- `Workflow`, `Step`, and `WorkflowRunner`.
-- `then`, `branch`, `parallel`, `loopUntil`, and `foreach`.
-- Input/output schemas for steps.
-- Laravel Queue execution.
+- `Workflow`, `Step`, `WorkflowContext`, and `WorkflowResponse`.
+- `then`, `branch`, `parallel`, `loopUntil`, and `forEach`.
+- Synchronous workflow execution with ordered step history.
+- Input/output schemas for workflow payloads.
+- Laravel Queue-friendly workflow jobs.
 - Suspend/resume snapshots.
 - Human approval steps.
+- Persistent workflow store adapters.
 
 ## v0.4 MCP
 

@@ -2,7 +2,7 @@
 
 Laravel-native AI agents inspired by Mastra, built around a small multimodal kernel: model routing, image generation, worker agents, supervisor orchestration, tools, and provider adapters.
 
-This package is in early alpha. The current implementation is intentionally focused on the first useful slice: running agents and letting a supervisor agent decide which worker should act next.
+This package is in early alpha. The current implementation is intentionally focused on useful orchestration primitives: running agents, letting a supervisor decide which worker should act next, and running deterministic workflows when a process should be explicit and repeatable.
 
 ## What Works Now
 
@@ -14,12 +14,13 @@ This package is in early alpha. The current implementation is intentionally focu
 - Manager-style orchestration using `SupervisorAgent`.
 - Basic `AgentResponse` metadata and supervisor step history.
 - Tool definitions and JSON-based tool execution loops.
+- Deterministic workflows with steps, branches, parallel fan-out, loops, and forEach processing.
+- Workflow input/output schemas, queued jobs, suspend/resume snapshots, and human approval steps.
 - Ports & Adapters boundary for model providers.
 - Laravel package auto-discovery and publishable config.
 
 ## Planned Next
 
-- Deterministic workflows.
 - MCP client/server support.
 - Observability, traces, and usage tracking.
 - RAG with embeddings and vector stores.
@@ -238,9 +239,123 @@ Agents with tools can ask the kernel to execute a real action by returning stric
 
 The agent executes the tool, injects the tool result into the next model call, and then continues until it returns a normal final answer or reaches the tool-step limit.
 
+## Deterministic Workflows
+
+Use workflows when a process should follow known steps instead of asking a model to choose the next action. Workflows run synchronously in this first slice and return structured output, step history, and final context.
+
+```php
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+use Andmarruda\LaravelAgents\Workflows\WorkflowContext;
+
+$response = LaravelAgents::workflow()
+    ->named('invoice-review')
+    ->then('normalize', function (array $invoice, WorkflowContext $context): array {
+        $context->put('currency', 'USD');
+
+        return [
+            ...$invoice,
+            'total' => (float) $invoice['total'],
+        ];
+    })
+    ->branch(
+        fn (array $invoice): string => $invoice['total'] >= 1000 ? 'approval' : 'auto',
+        [
+            'approval' => fn (array $invoice): array => [...$invoice, 'status' => 'waiting_approval'],
+            'auto' => fn (array $invoice): array => [...$invoice, 'status' => 'approved'],
+        ],
+        'approval_gate',
+    )
+    ->run(['id' => 10, 'total' => '1250.00']);
+
+$invoice = $response->data;
+$steps = $response->steps;
+$context = $response->meta['context'];
+```
+
+Reusable step classes implement `Andmarruda\LaravelAgents\Workflows\Step`:
+
+```php
+use Andmarruda\LaravelAgents\Workflows\Step;
+use Andmarruda\LaravelAgents\Workflows\WorkflowContext;
+
+final class AddTaxStep implements Step
+{
+    public function handle(mixed $input, WorkflowContext $context): array
+    {
+        return [
+            ...$input,
+            'total' => $input['total'] * 1.08,
+        ];
+    }
+}
+```
+
+Available flow helpers:
+
+- `then()` for one deterministic step after another.
+- `branch()` for named paths.
+- `parallel()` for deterministic fan-out/fan-in in declaration order.
+- `loopUntil()` for bounded loops.
+- `forEach()` for processing iterable items.
+- `approval()` for human-in-the-loop suspension and resume.
+
+Workflows can validate input and output payloads:
+
+```php
+$response = LaravelAgents::workflow()
+    ->inputSchema(['name' => 'required|string'])
+    ->outputSchema(['message' => 'required|string'])
+    ->then('greet', fn (array $input): array => ['message' => 'Hello '.$input['name']])
+    ->run(['name' => 'Ana']);
+```
+
+Human approval steps suspend the workflow and return a resumable snapshot:
+
+```php
+use Andmarruda\LaravelAgents\Workflows\InMemoryWorkflowStore;
+
+$store = new InMemoryWorkflowStore();
+
+$response = LaravelAgents::workflow()
+    ->then('prepare', fn (array $input): array => [...$input, 'prepared' => true])
+    ->approval('manager_approval', 'Approve this invoice?', ['role' => 'manager'])
+    ->then('finish', fn (array $input): array => [...$input, 'finished' => true])
+    ->run(['id' => 10], store: $store);
+
+if ($response->status === 'awaiting_approval') {
+    $snapshotId = $response->snapshot->id;
+}
+
+$resumed = LaravelAgents::workflow()
+    ->then('prepare', fn (array $input): array => [...$input, 'prepared' => true])
+    ->approval('manager_approval', 'Approve this invoice?', ['role' => 'manager'])
+    ->then('finish', fn (array $input): array => [...$input, 'finished' => true])
+    ->resume($snapshotId, ['approved_by' => auth()->id()], $store);
+```
+
+Class-based workflows can be queued. The job implements Laravel's `ShouldQueue` contract:
+
+```php
+final class InvoiceWorkflow extends \Andmarruda\LaravelAgents\Workflows\Workflow
+{
+    public function __construct()
+    {
+        parent::__construct('invoice-workflow');
+
+        $this
+            ->then(NormalizeInvoice::class)
+            ->approval('manager_approval', 'Approve this invoice?')
+            ->then(SaveInvoice::class);
+    }
+}
+
+(new InvoiceWorkflow())->dispatch(['id' => 10]);
+```
+
 ## Current Limitations
 
-- Workflows are not implemented yet.
+- Closure-based workflow steps are best for synchronous runs; class-based workflows are the safest option for queued execution.
+- `InMemoryWorkflowStore` is useful for tests and local examples. Production apps should bind a persistent `WorkflowStore`.
 - Streaming is not implemented yet.
 - Image generation currently ships with an OpenAI adapter only.
 - Supervisor decisions rely on the model returning valid JSON.
@@ -255,7 +370,7 @@ Run the automated test suite:
 composer test
 ```
 
-The initial suite covers model routing, image routing, DTOs, tools, worker agents, kernel capability routing, and supervisor orchestration without calling external AI APIs.
+The initial suite covers model routing, image routing, DTOs, tools, worker agents, deterministic workflows, kernel capability routing, and supervisor orchestration without calling external AI APIs.
 
 ## Documentation
 

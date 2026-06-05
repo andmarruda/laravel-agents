@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Andmarruda\LaravelAgents\Ports\ModelPort model(string $model)
  * @method static \Andmarruda\LaravelAgents\Ports\ImageGenerationPort image(?string $model = null)
  * @method static \Andmarruda\LaravelAgents\Agents\Agent agent(string|\Andmarruda\LaravelAgents\Agents\Agent $agent)
+ * @method static \Andmarruda\LaravelAgents\Workflows\Workflow workflow(string|\Andmarruda\LaravelAgents\Workflows\Workflow|null $workflow = null)
  */
 class LaravelAgents extends Facade
 {

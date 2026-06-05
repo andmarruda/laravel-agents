@@ -14,6 +14,7 @@ src/
   Adapters/     Infrastructure implementations of ports.
   Data/         Small immutable response objects.
   Tools/        Tool runtime helpers.
+  Workflows/    Deterministic process orchestration primitives.
   Contracts/    Compatibility contracts and public extension points.
 ```
 
@@ -33,6 +34,8 @@ The core depends on ports, never directly on provider SDKs or HTTP details.
 - `Kernel\AgentKernel` exposes capabilities such as text and image without forcing agents to treat every execution as chat text.
 
 Adapters can change, split, or gain SDK-specific details without forcing changes into `Agent`, `SupervisorAgent`, workflows, memory, or guardrails.
+
+Workflows are intentionally model-agnostic. They can call agents, tools, jobs, or application services inside a step, but the route itself is deterministic and defined by application code.
 
 ## Evolution Rules
 

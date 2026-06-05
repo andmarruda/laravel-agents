@@ -8,6 +8,7 @@ O foco desta versão é o core de orquestração:
 - criar agentes workers;
 - criar um agente supervisor/manager;
 - delegar tarefas entre agentes;
+- executar workflows determinísticos para processos de negócio explícitos;
 - receber resposta final e histórico de passos.
 
 ## 1. Instalação
@@ -253,7 +254,7 @@ $response = LaravelAgents::agent(ManagerAgent::class)
         'user_id' => $user->id,
         'constraints' => [
             'sem memory persistente ainda',
-            'sem workflows ainda',
+            'workflows rodam de forma síncrona nesta alpha',
         ],
     ]);
 ```
@@ -283,7 +284,166 @@ Agentes com tools podem pedir uma ação real retornando JSON estrito:
 
 O agent executa a tool, injeta o resultado na próxima chamada do modelo e continua até gerar uma resposta final normal ou atingir o limite de tool steps.
 
-## 9. Arquitetura
+## 9. Workflows Determinísticos
+
+Use workflows quando você já conhece o processo e quer execução previsível. Um workflow ainda pode chamar agents ou tools dentro de uma etapa, mas a rota em si é definida pelo seu código.
+
+```php
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+use Andmarruda\LaravelAgents\Workflows\WorkflowContext;
+
+$response = LaravelAgents::workflow()
+    ->named('invoice-review')
+    ->then('normalize', function (array $invoice, WorkflowContext $context): array {
+        $context->put('currency', 'USD');
+
+        return [
+            ...$invoice,
+            'total' => (float) $invoice['total'],
+        ];
+    })
+    ->branch(
+        fn (array $invoice): string => $invoice['total'] >= 1000 ? 'approval' : 'auto',
+        [
+            'approval' => fn (array $invoice): array => [...$invoice, 'status' => 'waiting_approval'],
+            'auto' => fn (array $invoice): array => [...$invoice, 'status' => 'approved'],
+        ],
+        'approval_gate',
+    )
+    ->run(['id' => 10, 'total' => '1250.00']);
+
+$invoice = $response->data;
+$steps = $response->steps;
+$context = $response->meta['context'];
+```
+
+A resposta contém:
+
+- `data`: saída final do workflow;
+- `steps`: histórico ordenado de steps, branches, loops e fan-out;
+- `meta`: nome do workflow, quantidade de steps e contexto final.
+
+## 9.1. Classes De Step Reutilizáveis
+
+Para steps reutilizáveis, implemente `Step`:
+
+```php
+<?php
+
+namespace App\Workflows\Steps;
+
+use Andmarruda\LaravelAgents\Workflows\Step;
+use Andmarruda\LaravelAgents\Workflows\WorkflowContext;
+
+final class AddTaxStep implements Step
+{
+    public function handle(mixed $input, WorkflowContext $context): array
+    {
+        return [
+            ...$input,
+            'total' => $input['total'] * 1.08,
+        ];
+    }
+}
+```
+
+Depois adicione ao workflow:
+
+```php
+use App\Workflows\Steps\AddTaxStep;
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+
+$response = LaravelAgents::workflow()
+    ->then(AddTaxStep::class)
+    ->run(['total' => 100]);
+```
+
+## 9.2. Helpers De Fluxo
+
+```php
+LaravelAgents::workflow()
+    ->then('normalize', fn (array $input) => $input)
+    ->parallel([
+        'summary' => fn (array $input) => summarize($input),
+        'score' => fn (array $input) => score($input),
+    ])
+    ->loopUntil(
+        fn (array $state) => pollStatus($state),
+        fn (array $state) => $state['ready'] === true,
+        maxIterations: 5,
+    )
+    ->forEach(
+        fn (array $state) => $state['items'],
+        fn (array $item) => processItem($item),
+    );
+```
+
+- `then()` executa um step.
+- `branch()` escolhe um caminho nomeado.
+- `parallel()` faz fan-out/fan-in em ordem de declaração.
+- `loopUntil()` repete um step até a condição ser verdadeira ou atingir o limite de iterações.
+- `forEach()` processa itens iteráveis e retorna resultados com as mesmas chaves.
+- `approval()` suspende um workflow até uma aprovação humana ser enviada no resume.
+
+## 9.3. Schemas, Snapshots E Aprovação
+
+Workflows podem validar arrays de input e output com regras simples:
+
+```php
+$response = LaravelAgents::workflow()
+    ->inputSchema(['name' => 'required|string'])
+    ->outputSchema(['message' => 'required|string'])
+    ->then('greet', fn (array $input): array => ['message' => 'Hello '.$input['name']])
+    ->run(['name' => 'Ana']);
+```
+
+Steps de aprovação suspendem a execução e retornam um `WorkflowSnapshot`:
+
+```php
+use Andmarruda\LaravelAgents\Workflows\InMemoryWorkflowStore;
+
+$store = new InMemoryWorkflowStore();
+
+$workflow = LaravelAgents::workflow()
+    ->then('prepare', fn (array $input): array => [...$input, 'prepared' => true])
+    ->approval('manager_approval', 'Approve this invoice?', ['role' => 'manager'])
+    ->then('finish', fn (array $input): array => [...$input, 'finished' => true]);
+
+$response = $workflow->run(['id' => 10], store: $store);
+
+$resumed = $workflow->resume(
+    $response->snapshot->id,
+    ['approved_by' => auth()->id()],
+    $store,
+);
+```
+
+A resposta suspensa tem `status`, `snapshot`, `steps` e metadados de aprovação em `meta`.
+
+## 9.4. Execução Em Queue
+
+Workflows baseados em classe podem ser despachados como jobs da queue do Laravel:
+
+```php
+final class InvoiceWorkflow extends \Andmarruda\LaravelAgents\Workflows\Workflow
+{
+    public function __construct()
+    {
+        parent::__construct('invoice-workflow');
+
+        $this
+            ->then(NormalizeInvoice::class)
+            ->approval('manager_approval', 'Approve this invoice?')
+            ->then(SaveInvoice::class);
+    }
+}
+
+(new InvoiceWorkflow())->dispatch(['id' => 10]);
+```
+
+O job gerado implementa o contrato `ShouldQueue` do Laravel. Steps com closure são melhores para execução síncrona; steps em classe são mais seguros para serialização em queue.
+
+## 10. Arquitetura
 
 O pacote usa Ports & Adapters para provedores de modelo:
 
@@ -304,10 +464,11 @@ O resto do pacote deve evoluir por módulos pequenos:
 
 Leia também: [../architecture/evolutionary-architecture.md](../architecture/evolutionary-architecture.md).
 
-## 10. Limitações Da Versão Alpha
+## 11. Limitações Da Versão Alpha
 
 - Não há memory persistente.
-- Não há workflows.
+- `InMemoryWorkflowStore` é para testes e exemplos. Apps em produção devem vincular um workflow store persistente.
+- Steps de workflow com closure são melhores para execução síncrona; workflows em classe são mais seguros para queue.
 - Não há streaming.
 - Imagem tem adapter OpenAI nesta primeira versão.
 - O supervisor depende de JSON válido vindo do modelo.
