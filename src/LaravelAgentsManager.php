@@ -5,6 +5,7 @@ namespace Andmarruda\LaravelAgents;
 use Andmarruda\LaravelAgents\Agents\Agent;
 use Andmarruda\LaravelAgents\Images\ImageRouter;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
+use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Andmarruda\LaravelAgents\Ports\ImageGenerationPort;
 use Andmarruda\LaravelAgents\Ports\ModelPort;
@@ -24,6 +25,7 @@ class LaravelAgentsManager
         protected ModelRouter $models,
         protected ImageRouter $images,
         protected AgentKernel $kernel,
+        protected ?McpToolRegistry $mcpToolRegistry = null,
     ) {
     }
 
@@ -35,6 +37,11 @@ class LaravelAgentsManager
     public function kernel(): AgentKernel
     {
         return $this->kernel;
+    }
+
+    public function mcp(): ?McpToolRegistry
+    {
+        return $this->mcpToolRegistry;
     }
 
     /**
@@ -71,6 +78,11 @@ class LaravelAgentsManager
         $instance = is_string($agent) ? app($agent) : $agent;
 
         $instance->setModelRouter($this->models);
+
+        if ($this->mcpToolRegistry) {
+            $instance->setMcpToolRegistry($this->mcpToolRegistry);
+        }
+
         $instance->bootAgent();
 
         return $instance;

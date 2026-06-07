@@ -55,4 +55,24 @@ return [
             'table' => env('AGENTS_MEMORY_TABLE', 'agent_memories'),
         ],
     ],
+
+    'mcp' => [
+        'enabled' => env('AGENTS_MCP_ENABLED', false),
+
+        'server' => [
+            'enabled' => env('AGENTS_MCP_SERVER_ENABLED', false),
+            'route' => env('AGENTS_MCP_SERVER_ROUTE', '/agents/mcp'),
+            'middleware' => ['api'],
+            'auth' => null,
+            'tools' => [],
+            'controllers' => [],
+            'routes' => [],
+        ],
+
+        'clients' => [
+            'servers' => [],
+        ],
+
+        'agents' => [],
+    ],
 ];

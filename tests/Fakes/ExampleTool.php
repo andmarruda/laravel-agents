@@ -20,6 +20,7 @@ class ExampleTool implements Tool
     {
         return [
             'type' => 'object',
+            'required' => ['name'],
             'properties' => [
                 'name' => ['type' => 'string'],
             ],

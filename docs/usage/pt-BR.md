@@ -11,6 +11,8 @@ O foco desta versão é o core de orquestração:
 - executar workflows determinísticos para processos de negócio explícitos;
 - receber resposta final e histórico de passos.
 
+Para uso com MCP, veja [Guia de Uso: MCP](mcp-pt-BR.md). Ele cobre clientes MCP remotos, servidor MCP em Laravel, adapters para controllers e rotas, hooks de autenticação e permissões MCP por agente.
+
 ## 1. Instalação
 
 Se o pacote já estiver disponível via Composer/Packagist, rode em um projeto Laravel:

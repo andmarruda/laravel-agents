@@ -21,7 +21,7 @@ This package is in early alpha. The current implementation is intentionally focu
 
 ## Planned Next
 
-- MCP client/server support.
+- MCP client/server support. See [docs/usage/mcp-en.md](docs/usage/mcp-en.md), [docs/usage/mcp-pt-BR.md](docs/usage/mcp-pt-BR.md), and [docs/architecture/mcp.md](docs/architecture/mcp.md).
 - Observability, traces, and usage tracking.
 - RAG with embeddings and vector stores.
 - Guardrails for input, output, and tool execution.

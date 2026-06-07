@@ -11,6 +11,8 @@ This version focuses on the orchestration core:
 - run deterministic workflows for explicit business processes;
 - receive a final answer and step history.
 
+For MCP usage, see [MCP Usage Guide](mcp-en.md). It covers remote MCP clients, a Laravel MCP server, controller and route adapters, authentication hooks, and per-agent MCP permissions.
+
 ## 1. Installation
 
 If the package is already available through Composer/Packagist, run this in a Laravel project:

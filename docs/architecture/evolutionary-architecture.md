@@ -14,6 +14,7 @@ src/
   Adapters/     Infrastructure implementations of ports.
   Data/         Small immutable response objects.
   Tools/        Tool runtime helpers.
+  MCP/          Model Context Protocol client/server adapters.
   Workflows/    Deterministic process orchestration primitives.
   Contracts/    Compatibility contracts and public extension points.
 ```
@@ -54,6 +55,8 @@ Workflows are intentionally model-agnostic. They can call agents, tools, jobs, o
 - `TracePort` for observability export.
 - `EmbeddingPort` and `VectorStorePort` for RAG.
 - `GuardrailPort` for input, output, and tool-execution policies.
+
+See [MCP Architecture Plan](mcp.md) for the v0.4 plan, including remote MCP clients, Laravel MCP server support, schema conversion, authentication hooks, and controller/route adapters for exposing existing application behavior as MCP-friendly tools.
 
 ## Compatibility
 

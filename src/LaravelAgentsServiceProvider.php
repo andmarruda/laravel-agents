@@ -6,6 +6,13 @@ use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Images\ImageRouter;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
+use Andmarruda\LaravelAgents\MCP\Auth\AuthorizesMcpRequests;
+use Andmarruda\LaravelAgents\MCP\Schema\JsonSchemaValidator;
+use Andmarruda\LaravelAgents\MCP\Schema\ToolSchemaConverter;
+use Andmarruda\LaravelAgents\MCP\Server\HttpMcpController;
+use Andmarruda\LaravelAgents\MCP\Server\McpRequestHandler;
+use Andmarruda\LaravelAgents\MCP\Server\McpServer;
+use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Memory\DatabaseLongTermAdapter;
 use Andmarruda\LaravelAgents\Memory\RedisShortTermAdapter;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
@@ -32,11 +39,42 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->singleton(ToolSchemaConverter::class, fn () => new ToolSchemaConverter());
+        $this->app->singleton(JsonSchemaValidator::class, fn () => new JsonSchemaValidator());
+
+        $this->app->singleton(McpToolRegistry::class, function ($app) {
+            return new McpToolRegistry(
+                $app['config']->get('agents.mcp', []),
+                schemaConverter: $app->make(ToolSchemaConverter::class),
+            );
+        });
+
+        $this->app->singleton(McpServer::class, function ($app) {
+            $authClass = $app['config']->get('agents.mcp.server.auth');
+            $authorizer = $authClass ? $app->make($authClass) : null;
+
+            return new McpServer(
+                $app->make(McpToolRegistry::class),
+                $authorizer instanceof AuthorizesMcpRequests ? $authorizer : null,
+                $app->make(ToolSchemaConverter::class),
+                $app->make(JsonSchemaValidator::class),
+            );
+        });
+
+        $this->app->singleton(McpRequestHandler::class, function ($app) {
+            return new McpRequestHandler($app->make(McpServer::class));
+        });
+
+        $this->app->singleton(HttpMcpController::class, function ($app) {
+            return new HttpMcpController($app->make(McpRequestHandler::class));
+        });
+
         $this->app->singleton(LaravelAgentsManager::class, function ($app) {
             return new LaravelAgentsManager(
                 $app->make(ModelRouter::class),
                 $app->make(ImageRouter::class),
                 $app->make(AgentKernel::class),
+                $app->make(McpToolRegistry::class),
             );
         });
 
@@ -63,6 +101,18 @@ class LaravelAgentsServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        if (
+            $this->app['config']->get('agents.mcp.server.enabled', false)
+            && $this->app->bound('router')
+        ) {
+            $this->app['router']
+                ->middleware($this->app['config']->get('agents.mcp.server.middleware', ['api']))
+                ->post(
+                    $this->app['config']->get('agents.mcp.server.route', '/agents/mcp'),
+                    HttpMcpController::class
+                );
+        }
+
         $this->publishes([
             __DIR__.'/../config/agents.php' => config_path('agents.php'),
         ], 'agents-config');

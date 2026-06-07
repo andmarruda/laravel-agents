@@ -6,6 +6,7 @@ use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Tool;
 use Andmarruda\LaravelAgents\Data\AgentResponse;
+use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Andmarruda\LaravelAgents\Tools\ToolBag;
 use Illuminate\Support\Str;
@@ -13,6 +14,8 @@ use Illuminate\Support\Str;
 abstract class Agent
 {
     protected ?ModelRouter $modelRouter = null;
+
+    protected ?McpToolRegistry $mcpToolRegistry = null;
 
     protected ?string $name = null;
 
@@ -30,6 +33,16 @@ abstract class Agent
     protected array $options = [];
 
     protected bool $configured = false;
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $mcpServers = [];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $allowedMcpTools = [];
 
     protected int $maxToolSteps = 4;
 
@@ -55,12 +68,20 @@ abstract class Agent
         }
 
         $this->configure();
+        $this->loadMcpTools();
         $this->configured = true;
     }
 
     public function setModelRouter(ModelRouter $modelRouter): static
     {
         $this->modelRouter = $modelRouter;
+
+        return $this;
+    }
+
+    public function setMcpToolRegistry(McpToolRegistry $mcpToolRegistry): static
+    {
+        $this->mcpToolRegistry = $mcpToolRegistry;
 
         return $this;
     }
@@ -221,6 +242,26 @@ abstract class Agent
         return $this;
     }
 
+    /**
+     * @param array<int, string> $servers
+     */
+    protected function withMcpServers(array $servers): static
+    {
+        $this->mcpServers = $servers;
+
+        return $this;
+    }
+
+    /**
+     * @param array<int, string> $tools
+     */
+    protected function allowMcpTools(array $tools): static
+    {
+        $this->allowedMcpTools = $tools;
+
+        return $this;
+    }
+
     protected function enableShortTermMemory(): static
     {
         $this->shortTermMemoryEnabled = true;
@@ -302,6 +343,26 @@ abstract class Agent
         }
 
         return json_decode(json_encode($result, JSON_UNESCAPED_SLASHES) ?: 'null', true);
+    }
+
+    protected function loadMcpTools(): void
+    {
+        foreach ($this->mcpToolRegistry()->toolsForAgent(static::class, $this->mcpServers, $this->allowedMcpTools) as $tool) {
+            $this->tools->add($tool);
+        }
+    }
+
+    protected function mcpToolRegistry(): McpToolRegistry
+    {
+        if ($this->mcpToolRegistry) {
+            return $this->mcpToolRegistry;
+        }
+
+        $this->mcpToolRegistry = function_exists('app')
+            ? app(McpToolRegistry::class)
+            : new McpToolRegistry();
+
+        return $this->mcpToolRegistry;
     }
 
     /**
