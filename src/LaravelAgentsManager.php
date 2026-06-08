@@ -7,6 +7,7 @@ use Andmarruda\LaravelAgents\Images\ImageRouter;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
 use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
+use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Andmarruda\LaravelAgents\Ports\ImageGenerationPort;
 use Andmarruda\LaravelAgents\Ports\ModelPort;
 use Andmarruda\LaravelAgents\Workflows\Workflow;
@@ -26,6 +27,7 @@ class LaravelAgentsManager
         protected ImageRouter $images,
         protected AgentKernel $kernel,
         protected ?McpToolRegistry $mcpToolRegistry = null,
+        protected ?TraceManager $traceManager = null,
     ) {
     }
 
@@ -83,6 +85,10 @@ class LaravelAgentsManager
             $instance->setMcpToolRegistry($this->mcpToolRegistry);
         }
 
+        if ($this->traceManager) {
+            $instance->setTraceManager($this->traceManager);
+        }
+
         $instance->bootAgent();
 
         return $instance;
@@ -98,9 +104,11 @@ class LaravelAgentsManager
     public function workflow(string|Workflow|null $workflow = null): Workflow
     {
         if ($workflow === null) {
-            return Workflow::make();
+            return Workflow::make()->setTraceManager($this->traceManager);
         }
 
-        return is_string($workflow) ? app($workflow) : $workflow;
+        $instance = is_string($workflow) ? app($workflow) : $workflow;
+
+        return $instance->setTraceManager($this->traceManager);
     }
 }

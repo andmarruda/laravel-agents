@@ -16,13 +16,12 @@ This package is in early alpha. The current implementation is intentionally focu
 - Tool definitions and JSON-based tool execution loops.
 - Deterministic workflows with steps, branches, parallel fan-out, loops, and forEach processing.
 - Workflow input/output schemas, queued jobs, suspend/resume snapshots, and human approval steps.
+- Production observability with traces, spans, model usage, cost metadata, lifecycle events, storage, and optional JSON dashboard routes.
 - Ports & Adapters boundary for model providers.
 - Laravel package auto-discovery and publishable config.
 
 ## Planned Next
 
-- MCP client/server support. See [docs/usage/mcp-en.md](docs/usage/mcp-en.md), [docs/usage/mcp-pt-BR.md](docs/usage/mcp-pt-BR.md), and [docs/architecture/mcp.md](docs/architecture/mcp.md).
-- Observability, traces, and usage tracking.
 - RAG with embeddings and vector stores.
 - Guardrails for input, output, and tool execution.
 - Streaming and structured output helpers.
@@ -63,6 +62,13 @@ Publish the config:
 
 ```bash
 php artisan vendor:publish --tag=agents-config
+```
+
+Publish and run the package migrations when using memory or observability storage:
+
+```bash
+php artisan vendor:publish --tag=agents-migrations
+php artisan migrate
 ```
 
 Configure at least one provider:
@@ -238,6 +244,33 @@ Agents with tools can ask the kernel to execute a real action by returning stric
 ```
 
 The agent executes the tool, injects the tool result into the next model call, and then continues until it returns a normal final answer or reaches the tool-step limit.
+
+## Observability
+
+Observability is opt-in. Agent runs, direct model calls, tool calls, supervisor delegation, and workflow nodes emit traces and spans when enabled. Responses include `trace_id` metadata when tracing is active:
+
+```php
+$response = LaravelAgents::agent(ResearchAgent::class)
+    ->generate('Find useful context.');
+
+$traceId = $response->meta['trace_id'];
+```
+
+Configure storage and the optional JSON dashboard in `config/agents.php`:
+
+```env
+AGENTS_OBSERVABILITY_ENABLED=true
+AGENTS_OBSERVABILITY_STORE=database
+AGENTS_OBSERVABILITY_DASHBOARD_ENABLED=true
+AGENTS_OBSERVABILITY_DASHBOARD_ROUTE=/agents/observability/traces
+```
+
+The dashboard exposes:
+
+- `GET /agents/observability/traces`
+- `GET /agents/observability/traces/{traceId}`
+
+The package also dispatches Laravel lifecycle events for agent, model, tool, and workflow activity, and includes an OpenTelemetry-shaped exporter contract for forwarding traces to your own telemetry pipeline.
 
 ## Deterministic Workflows
 

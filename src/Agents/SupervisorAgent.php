@@ -4,6 +4,10 @@ namespace Andmarruda\LaravelAgents\Agents;
 
 use RuntimeException;
 use Andmarruda\LaravelAgents\Data\AgentResponse;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunFailed;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunFinished;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunStarted;
+use Throwable;
 
 abstract class SupervisorAgent extends Agent
 {
@@ -31,56 +35,93 @@ abstract class SupervisorAgent extends Agent
     public function generate(string $input, array $context = []): AgentResponse
     {
         $this->bootAgent();
+        $traceManager = $this->traceManager();
+        $trace = $traceManager?->startTrace('agent.supervisor.run', [
+            'agent.name' => $this->name(),
+            'agent.class' => static::class,
+            'input.length' => strlen($input),
+        ]);
+        $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
         $steps = [];
         $task = $input;
 
-        for ($step = 1; $step <= $this->maxSteps; $step++) {
-            $decision = $this->decide($task, $steps, $context);
-            $action = $decision['action'] ?? null;
+        try {
+            for ($step = 1; $step <= $this->maxSteps; $step++) {
+                $decision = $this->decide($task, $steps, $context);
+                $action = $decision['action'] ?? null;
 
-            if ($action === 'final') {
-                return new AgentResponse($this->normalizeFinalAnswer($decision['answer'] ?? ''), $steps, [
-                    'agent' => $this->name(),
-                    'steps' => count($steps),
+                if ($action === 'final') {
+                    $agentResponse = new AgentResponse($this->normalizeFinalAnswer($decision['answer'] ?? ''), $steps, [
+                        'agent' => $this->name(),
+                        'steps' => count($steps),
+                        'trace_id' => $trace?->id,
+                    ]);
+                    $traceManager?->dispatch(new AgentRunFinished($this->name(), $agentResponse));
+                    $traceManager?->finishTrace($trace, ['agent.steps' => count($steps)]);
+
+                    return $agentResponse;
+                }
+
+                if ($action !== 'delegate') {
+                    throw new RuntimeException('Supervisor decision must be either delegate or final.');
+                }
+
+                $agentName = $decision['agent'] ?? null;
+                $agent = $this->agents[$agentName] ?? null;
+
+                if (! $agent) {
+                    throw new RuntimeException("Supervisor selected unknown agent [{$agentName}].");
+                }
+
+                $agent->setModelRouter($this->modelRouter());
+                $agent->setTraceManager($traceManager);
+
+                $delegateSpan = $traceManager?->startSpan('agent.delegate', 'agent', [
+                    'agent.supervisor' => $this->name(),
+                    'agent.worker' => $agent->name(),
+                    'agent.task' => $decision['task'] ?? $task,
                 ]);
+
+                try {
+                    $workerResponse = $agent->generate($decision['task'] ?? $task, [
+                        ...$context,
+                        'supervisor' => $this->name(),
+                        'previous_steps' => $steps,
+                    ]);
+                    $traceManager?->finishSpan($delegateSpan, ['agent.worker_trace_id' => $workerResponse->meta['trace_id'] ?? null]);
+                } catch (Throwable $throwable) {
+                    $traceManager?->failSpan($delegateSpan, $throwable);
+
+                    throw $throwable;
+                }
+
+                $steps[] = [
+                    'step' => $step,
+                    'agent' => $agent->name(),
+                    'task' => $decision['task'] ?? $task,
+                    'result' => $workerResponse->content,
+                    'meta' => $workerResponse->meta,
+                ];
+
+                $task = $decision['next_task'] ?? $task;
             }
 
-            if ($action !== 'delegate') {
-                throw new RuntimeException('Supervisor decision must be either delegate or final.');
-            }
-
-            $agentName = $decision['agent'] ?? null;
-            $agent = $this->agents[$agentName] ?? null;
-
-            if (! $agent) {
-                throw new RuntimeException("Supervisor selected unknown agent [{$agentName}].");
-            }
-
-            $agent->setModelRouter($this->modelRouter());
-
-            $workerResponse = $agent->generate($decision['task'] ?? $task, [
-                ...$context,
-                'supervisor' => $this->name(),
-                'previous_steps' => $steps,
+            $response = parent::generate($this->finalizePrompt($input, $steps), $context);
+            $agentResponse = new AgentResponse($response->content, $steps, [
+                ...$response->meta,
+                'max_steps_reached' => true,
+                'trace_id' => $trace?->id,
             ]);
+            $traceManager?->dispatch(new AgentRunFinished($this->name(), $agentResponse));
+            $traceManager?->finishTrace($trace, ['agent.steps' => count($steps), 'agent.max_steps_reached' => true]);
 
-            $steps[] = [
-                'step' => $step,
-                'agent' => $agent->name(),
-                'task' => $decision['task'] ?? $task,
-                'result' => $workerResponse->content,
-                'meta' => $workerResponse->meta,
-            ];
+            return $agentResponse;
+        } catch (Throwable $throwable) {
+            $traceManager?->dispatch(new AgentRunFailed($this->name(), $throwable));
+            $traceManager?->failTrace($trace, $throwable);
 
-            $task = $decision['next_task'] ?? $task;
+            throw $throwable;
         }
-
-        $response = parent::generate($this->finalizePrompt($input, $steps), $context);
-
-        return new AgentResponse($response->content, $steps, [
-            ...$response->meta,
-            'max_steps_reached' => true,
-        ]);
     }
 
     /**
@@ -112,12 +153,10 @@ abstract class SupervisorAgent extends Agent
      */
     protected function decide(string $task, array $steps, array $context): array
     {
-        $response = $this->modelRouter()
-            ->for($this->model)
-            ->generate($this->decisionMessages($task, $steps, $context), [
-                ...$this->options,
-                'temperature' => $this->options['temperature'] ?? 0.1,
-            ]);
+        $response = $this->generateWithObservability($this->decisionMessages($task, $steps, $context), [
+            ...$this->options,
+            'temperature' => $this->options['temperature'] ?? 0.1,
+        ]);
 
         $decision = $response->json();
 

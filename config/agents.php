@@ -56,6 +56,24 @@ return [
         ],
     ],
 
+    'observability' => [
+        'enabled' => env('AGENTS_OBSERVABILITY_ENABLED', false),
+        'store' => env('AGENTS_OBSERVABILITY_STORE', 'database'),
+        'connection' => env('AGENTS_OBSERVABILITY_DB_CONNECTION'),
+        'trace_table' => env('AGENTS_OBSERVABILITY_TRACE_TABLE', 'agent_traces'),
+        'span_table' => env('AGENTS_OBSERVABILITY_SPAN_TABLE', 'agent_spans'),
+
+        'dashboard' => [
+            'enabled' => env('AGENTS_OBSERVABILITY_DASHBOARD_ENABLED', false),
+            'route' => env('AGENTS_OBSERVABILITY_DASHBOARD_ROUTE', '/agents/observability/traces'),
+            'middleware' => ['web'],
+        ],
+
+        'pricing' => [
+            // 'openai/gpt-4.1-mini' => ['input_per_1k' => 0.0004, 'output_per_1k' => 0.0016, 'currency' => 'USD'],
+        ],
+    ],
+
     'mcp' => [
         'enabled' => env('AGENTS_MCP_ENABLED', false),
 

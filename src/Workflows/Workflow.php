@@ -3,6 +3,13 @@
 namespace Andmarruda\LaravelAgents\Workflows;
 
 use Closure;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowFailed;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowFinished;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowStarted;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowStepFailed;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowStepFinished;
+use Andmarruda\LaravelAgents\Observability\Events\WorkflowStepStarted;
+use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use InvalidArgumentException;
 use RuntimeException;
@@ -25,6 +32,8 @@ class Workflow
      */
     protected ?array $outputSchema = null;
 
+    protected ?TraceManager $traceManager = null;
+
     /**
      * Create a workflow instance with an optional display name.
      *
@@ -45,6 +54,13 @@ class Workflow
     public static function make(?string $name = null): static
     {
         return new static($name);
+    }
+
+    public function setTraceManager(?TraceManager $traceManager): static
+    {
+        $this->traceManager = $traceManager;
+
+        return $this;
     }
 
     /**
@@ -239,33 +255,57 @@ class Workflow
      */
     public function run(mixed $input = null, array $context = [], ?WorkflowStore $store = null): WorkflowResponse
     {
-        $this->validateSchema($input, $this->inputSchema, 'input');
+        $traceManager = $this->traceManager();
+        $trace = $traceManager?->startTrace('workflow.run', [
+            'workflow.name' => $this->workflowName(),
+            'workflow.class' => static::class,
+        ]);
+        $traceManager?->dispatch(new WorkflowStarted($this->workflowName(), $input, $context));
 
-        $workflowContext = new WorkflowContext($context);
-        $steps = [];
-        $output = $this->runNodes($this->nodes, $input, $workflowContext, $steps);
+        try {
+            $this->validateSchema($input, $this->inputSchema, 'input');
 
-        if ($output instanceof WorkflowSuspension) {
-            if ($store) {
-                $store->put($output->snapshot);
+            $workflowContext = new WorkflowContext($context);
+            $steps = [];
+            $output = $this->runNodes($this->nodes, $input, $workflowContext, $steps);
+
+            if ($output instanceof WorkflowSuspension) {
+                if ($store) {
+                    $store->put($output->snapshot);
+                }
+
+                $response = new WorkflowResponse($output->snapshot->data, $output->snapshot->steps, [
+                    'workflow' => $this->workflowName(),
+                    'steps' => count($output->snapshot->steps),
+                    'context' => $output->snapshot->context,
+                    'snapshot_id' => $output->snapshot->id,
+                    'approval' => $output->snapshot->approval,
+                    'trace_id' => $trace?->id,
+                ], $output->snapshot->status, $output->snapshot);
+                $traceManager?->dispatch(new WorkflowFinished($this->workflowName(), $response));
+                $traceManager?->finishTrace($trace, ['workflow.status' => $output->snapshot->status]);
+
+                return $response;
             }
 
-            return new WorkflowResponse($output->snapshot->data, $output->snapshot->steps, [
-                'workflow' => $this->name ?? static::class,
-                'steps' => count($output->snapshot->steps),
-                'context' => $output->snapshot->context,
-                'snapshot_id' => $output->snapshot->id,
-                'approval' => $output->snapshot->approval,
-            ], $output->snapshot->status, $output->snapshot);
+            $this->validateSchema($output, $this->outputSchema, 'output');
+
+            $response = new WorkflowResponse($output, $steps, [
+                'workflow' => $this->workflowName(),
+                'steps' => count($steps),
+                'context' => $workflowContext->all(),
+                'trace_id' => $trace?->id,
+            ]);
+            $traceManager?->dispatch(new WorkflowFinished($this->workflowName(), $response));
+            $traceManager?->finishTrace($trace, ['workflow.steps' => count($steps)]);
+
+            return $response;
+        } catch (Throwable $throwable) {
+            $traceManager?->dispatch(new WorkflowFailed($this->workflowName(), $throwable));
+            $traceManager?->failTrace($trace, $throwable);
+
+            throw $throwable;
         }
-
-        $this->validateSchema($output, $this->outputSchema, 'output');
-
-        return new WorkflowResponse($output, $steps, [
-            'workflow' => $this->name ?? static::class,
-            'steps' => count($steps),
-            'context' => $workflowContext->all(),
-        ]);
     }
 
     /**
@@ -278,44 +318,68 @@ class Workflow
      */
     public function resume(WorkflowSnapshot|string $snapshot, mixed $approval = null, ?WorkflowStore $store = null): WorkflowResponse
     {
-        if (is_string($snapshot)) {
-            $snapshot = $store?->get($snapshot)
-                ?? throw new RuntimeException("Workflow snapshot [{$snapshot}] was not found.");
-        }
+        $traceManager = $this->traceManager();
+        $trace = $traceManager?->startTrace('workflow.resume', [
+            'workflow.name' => $this->workflowName(),
+            'workflow.class' => static::class,
+        ]);
 
-        $context = new WorkflowContext($snapshot->context);
-
-        if ($snapshot->approval && $approval !== null) {
-            $approvals = $context->get('_approvals', []);
-            $approvals[$snapshot->approval['name']] = $approval;
-            $context->put('_approvals', $approvals);
-        }
-
-        $steps = $snapshot->steps;
-        $output = $this->runNodes($this->nodes, $snapshot->data, $context, $steps, $snapshot->nodeIndex);
-
-        if ($output instanceof WorkflowSuspension) {
-            if ($store) {
-                $store->put($output->snapshot);
+        try {
+            if (is_string($snapshot)) {
+                $snapshot = $store?->get($snapshot)
+                    ?? throw new RuntimeException("Workflow snapshot [{$snapshot}] was not found.");
             }
 
-            return new WorkflowResponse($output->snapshot->data, $output->snapshot->steps, [
-                'workflow' => $this->name ?? static::class,
-                'steps' => count($output->snapshot->steps),
-                'context' => $output->snapshot->context,
-                'snapshot_id' => $output->snapshot->id,
-                'approval' => $output->snapshot->approval,
-            ], $output->snapshot->status, $output->snapshot);
+            $traceManager?->dispatch(new WorkflowStarted($this->workflowName(), $snapshot->data, $snapshot->context));
+            $context = new WorkflowContext($snapshot->context);
+
+            if ($snapshot->approval && $approval !== null) {
+                $approvals = $context->get('_approvals', []);
+                $approvals[$snapshot->approval['name']] = $approval;
+                $context->put('_approvals', $approvals);
+            }
+
+            $steps = $snapshot->steps;
+            $output = $this->runNodes($this->nodes, $snapshot->data, $context, $steps, $snapshot->nodeIndex);
+
+            if ($output instanceof WorkflowSuspension) {
+                if ($store) {
+                    $store->put($output->snapshot);
+                }
+
+                $response = new WorkflowResponse($output->snapshot->data, $output->snapshot->steps, [
+                    'workflow' => $this->workflowName(),
+                    'steps' => count($output->snapshot->steps),
+                    'context' => $output->snapshot->context,
+                    'snapshot_id' => $output->snapshot->id,
+                    'approval' => $output->snapshot->approval,
+                    'trace_id' => $trace?->id,
+                ], $output->snapshot->status, $output->snapshot);
+                $traceManager?->dispatch(new WorkflowFinished($this->workflowName(), $response));
+                $traceManager?->finishTrace($trace, ['workflow.status' => $output->snapshot->status]);
+
+                return $response;
+            }
+
+            $this->validateSchema($output, $this->outputSchema, 'output');
+
+            $response = new WorkflowResponse($output, $steps, [
+                'workflow' => $this->workflowName(),
+                'steps' => count($steps),
+                'context' => $context->all(),
+                'resumed_from' => $snapshot->id,
+                'trace_id' => $trace?->id,
+            ]);
+            $traceManager?->dispatch(new WorkflowFinished($this->workflowName(), $response));
+            $traceManager?->finishTrace($trace, ['workflow.steps' => count($steps), 'workflow.resumed_from' => $snapshot->id]);
+
+            return $response;
+        } catch (Throwable $throwable) {
+            $traceManager?->dispatch(new WorkflowFailed($this->workflowName(), $throwable));
+            $traceManager?->failTrace($trace, $throwable);
+
+            throw $throwable;
         }
-
-        $this->validateSchema($output, $this->outputSchema, 'output');
-
-        return new WorkflowResponse($output, $steps, [
-            'workflow' => $this->name ?? static::class,
-            'steps' => count($steps),
-            'context' => $context->all(),
-            'resumed_from' => $snapshot->id,
-        ]);
     }
 
     /**
@@ -381,15 +445,7 @@ class Workflow
 
         for ($index = $startIndex; $index < count($nodes); $index++) {
             $node = $nodes[$index];
-            $current = match ($node['type']) {
-                'step' => $this->runStep($node['name'], $node['handler'], $current, $context, $steps),
-                'branch' => $this->runBranch($node, $current, $context, $steps),
-                'parallel' => $this->runParallel($node, $current, $context, $steps),
-                'loop' => $this->runLoop($node, $current, $context, $steps),
-                'foreach' => $this->runForeach($node, $current, $context, $steps),
-                'approval' => $this->runApproval($node, $current, $context, $steps, $index),
-                default => throw new RuntimeException("Unknown workflow node [{$node['type']}]."),
-            };
+            $current = $this->runNodeWithObservability($node, $current, $context, $steps, $index);
 
             if ($current instanceof WorkflowSuspension) {
                 return $current;
@@ -397,6 +453,47 @@ class Workflow
         }
 
         return $current;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param array<int, array<string, mixed>> $steps
+     */
+    protected function runNodeWithObservability(array $node, mixed $current, WorkflowContext $context, array &$steps, int $index): mixed
+    {
+        $name = (string) ($node['name'] ?? $node['type']);
+        $type = (string) $node['type'];
+        $traceManager = $this->traceManager();
+        $span = $traceManager?->startSpan('workflow.'.$type, 'workflow', [
+            'workflow.name' => $this->workflowName(),
+            'workflow.node' => $name,
+            'workflow.node_type' => $type,
+        ]);
+        $traceManager?->dispatch(new WorkflowStepStarted($this->workflowName(), $name, $type));
+
+        try {
+            $output = match ($type) {
+                'step' => $this->runStep($name, $node['handler'], $current, $context, $steps),
+                'branch' => $this->runBranch($node, $current, $context, $steps),
+                'parallel' => $this->runParallel($node, $current, $context, $steps),
+                'loop' => $this->runLoop($node, $current, $context, $steps),
+                'foreach' => $this->runForeach($node, $current, $context, $steps),
+                'approval' => $this->runApproval($node, $current, $context, $steps, $index),
+                default => throw new RuntimeException("Unknown workflow node [{$type}]."),
+            };
+
+            $traceManager?->finishSpan($span, [
+                'workflow.suspended' => $output instanceof WorkflowSuspension,
+            ]);
+            $traceManager?->dispatch(new WorkflowStepFinished($this->workflowName(), $name, $type, $output));
+
+            return $output;
+        } catch (Throwable $throwable) {
+            $traceManager?->failSpan($span, $throwable);
+            $traceManager?->dispatch(new WorkflowStepFailed($this->workflowName(), $name, $type, $throwable));
+
+            throw $throwable;
+        }
     }
 
     /**
@@ -744,6 +841,28 @@ class Workflow
         $parts = explode('\\', $class);
 
         return end($parts) ?: $class;
+    }
+
+    protected function workflowName(): string
+    {
+        return $this->name ?? static::class;
+    }
+
+    protected function traceManager(): ?TraceManager
+    {
+        if ($this->traceManager) {
+            return $this->traceManager;
+        }
+
+        if (! function_exists('app')) {
+            return null;
+        }
+
+        try {
+            return app(TraceManager::class);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

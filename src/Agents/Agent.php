@@ -8,14 +8,27 @@ use Andmarruda\LaravelAgents\Contracts\Tool;
 use Andmarruda\LaravelAgents\Data\AgentResponse;
 use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunFailed;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunFinished;
+use Andmarruda\LaravelAgents\Observability\Events\AgentRunStarted;
+use Andmarruda\LaravelAgents\Observability\Events\ModelCallFailed;
+use Andmarruda\LaravelAgents\Observability\Events\ModelCallFinished;
+use Andmarruda\LaravelAgents\Observability\Events\ModelCallStarted;
+use Andmarruda\LaravelAgents\Observability\Events\ToolCallFailed;
+use Andmarruda\LaravelAgents\Observability\Events\ToolCallFinished;
+use Andmarruda\LaravelAgents\Observability\Events\ToolCallStarted;
+use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Andmarruda\LaravelAgents\Tools\ToolBag;
 use Illuminate\Support\Str;
+use Throwable;
 
 abstract class Agent
 {
     protected ?ModelRouter $modelRouter = null;
 
     protected ?McpToolRegistry $mcpToolRegistry = null;
+
+    protected ?TraceManager $traceManager = null;
 
     protected ?string $name = null;
 
@@ -86,6 +99,13 @@ abstract class Agent
         return $this;
     }
 
+    public function setTraceManager(?TraceManager $traceManager): static
+    {
+        $this->traceManager = $traceManager;
+
+        return $this;
+    }
+
     public function continueSession(string $sessionId): static
     {
         $this->sessionId = $sessionId;
@@ -97,61 +117,83 @@ abstract class Agent
     public function generate(string $input, array $context = []): AgentResponse
     {
         $this->bootAgent();
+        $traceManager = $this->traceManager();
+        $trace = $traceManager?->startTrace('agent.run', [
+            'agent.name' => $this->name(),
+            'agent.class' => static::class,
+            'input.length' => strlen($input),
+        ]);
+        $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
 
-        if ($this->shortTermMemoryEnabled && $this->sessionId === null) {
-            $this->sessionId = (string) Str::uuid();
-        }
-
-        $history = $this->loadShortTermHistory();
-        $messages = $this->messages($input, $context, $history);
-        $steps = [];
-
-        for ($step = 1; $step <= $this->maxToolSteps + 1; $step++) {
-            $response = $this->modelRouter()
-                ->for($this->model)
-                ->generate($messages, $this->options);
-
-            $toolCall = $this->parseToolCall($response->json());
-
-            if (! $toolCall) {
-                $this->appendToShortTermMemory($input, $response->content);
-
-                return new AgentResponse($response->content, $steps, [
-                    'agent' => $this->name(),
-                    'model' => $response->model,
-                    'provider' => $response->provider,
-                    'usage' => $response->usage,
-                    'tool_steps' => count($steps),
-                ], $this->sessionId);
+        try {
+            if ($this->shortTermMemoryEnabled && $this->sessionId === null) {
+                $this->sessionId = (string) Str::uuid();
             }
 
-            $tool = $this->tools->get($toolCall['tool']);
-            $toolResult = $tool->handle($toolCall['input']);
-            $steps[] = [
-                'step' => $step,
-                'action' => 'tool',
-                'tool' => $tool->name(),
-                'input' => $toolCall['input'],
-                'result' => $this->normalizeToolResult($toolResult),
-            ];
+            $history = $this->loadShortTermHistory();
+            $messages = $this->messages($input, $context, $history);
+            $steps = [];
 
-            $messages[] = ['role' => 'assistant', 'content' => $response->content];
-            $messages[] = [
-                'role' => 'user',
-                'content' => 'Tool result for '.$tool->name().': '.json_encode($steps[array_key_last($steps)]['result'], JSON_UNESCAPED_SLASHES),
-            ];
+            for ($step = 1; $step <= $this->maxToolSteps + 1; $step++) {
+                $response = $this->generateWithObservability($messages, $this->options);
+
+                $toolCall = $this->parseToolCall($response->json());
+
+                if (! $toolCall) {
+                    $this->appendToShortTermMemory($input, $response->content);
+
+                    $agentResponse = new AgentResponse($response->content, $steps, [
+                        'agent' => $this->name(),
+                        'model' => $response->model,
+                        'provider' => $response->provider,
+                        'usage' => $response->usage,
+                        'tool_steps' => count($steps),
+                        'trace_id' => $trace?->id,
+                    ], $this->sessionId);
+                    $traceManager?->dispatch(new AgentRunFinished($this->name(), $agentResponse));
+                    $traceManager?->finishTrace($trace, ['agent.tool_steps' => count($steps)]);
+
+                    return $agentResponse;
+                }
+
+                $tool = $this->tools->get($toolCall['tool']);
+                $toolResult = $this->handleToolWithObservability($tool, $toolCall['input']);
+                $steps[] = [
+                    'step' => $step,
+                    'action' => 'tool',
+                    'tool' => $tool->name(),
+                    'input' => $toolCall['input'],
+                    'result' => $this->normalizeToolResult($toolResult),
+                ];
+
+                $messages[] = ['role' => 'assistant', 'content' => $response->content];
+                $messages[] = [
+                    'role' => 'user',
+                    'content' => 'Tool result for '.$tool->name().': '.json_encode($steps[array_key_last($steps)]['result'], JSON_UNESCAPED_SLASHES),
+                ];
+            }
+
+            $this->appendToShortTermMemory($input, $response->content);
+
+            $agentResponse = new AgentResponse($response->content, $steps, [
+                'agent' => $this->name(),
+                'model' => $response->model,
+                'provider' => $response->provider,
+                'usage' => $response->usage,
+                'tool_steps' => count($steps),
+                'max_tool_steps_reached' => true,
+                'trace_id' => $trace?->id,
+            ], $this->sessionId);
+            $traceManager?->dispatch(new AgentRunFinished($this->name(), $agentResponse));
+            $traceManager?->finishTrace($trace, ['agent.tool_steps' => count($steps)]);
+
+            return $agentResponse;
+        } catch (Throwable $throwable) {
+            $traceManager?->dispatch(new AgentRunFailed($this->name(), $throwable));
+            $traceManager?->failTrace($trace, $throwable);
+
+            throw $throwable;
         }
-
-        $this->appendToShortTermMemory($input, $response->content);
-
-        return new AgentResponse($response->content, $steps, [
-            'agent' => $this->name(),
-            'model' => $response->model,
-            'provider' => $response->provider,
-            'usage' => $response->usage,
-            'tool_steps' => count($steps),
-            'max_tool_steps_reached' => true,
-        ], $this->sessionId);
     }
 
     public function remember(string $scope, string $key, mixed $value): void
@@ -312,6 +354,80 @@ abstract class Agent
         }
 
         return $this->modelRouter;
+    }
+
+    /**
+     * @param array<int, array{role: string, content: string}> $messages
+     * @param array<string, mixed> $options
+     */
+    protected function generateWithObservability(array $messages, array $options): \Andmarruda\LaravelAgents\Data\ModelResponse
+    {
+        $traceManager = $this->traceManager();
+        $span = $traceManager?->startSpan('model.generate', 'model', [
+            'agent.name' => $this->name(),
+            'model.requested' => $this->model,
+            'model.message_count' => count($messages),
+        ]);
+        $traceManager?->dispatch(new ModelCallStarted($this->model, $messages, $options));
+
+        try {
+            $response = $this->modelRouter()
+                ->for($this->model)
+                ->generate($messages, $options);
+            $traceManager?->finishSpan($span, $traceManager->modelMetadata($response->provider, $response->model, $response->usage));
+            $traceManager?->dispatch(new ModelCallFinished($response));
+
+            return $response;
+        } catch (Throwable $throwable) {
+            $traceManager?->failSpan($span, $throwable);
+            $traceManager?->dispatch(new ModelCallFailed($this->model, $throwable));
+
+            throw $throwable;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     */
+    protected function handleToolWithObservability(Tool $tool, array $input): mixed
+    {
+        $traceManager = $this->traceManager();
+        $span = $traceManager?->startSpan('tool.call', 'tool', [
+            'agent.name' => $this->name(),
+            'tool.name' => $tool->name(),
+            'tool.input' => $input,
+        ]);
+        $traceManager?->dispatch(new ToolCallStarted($tool->name(), $input));
+
+        try {
+            $result = $tool->handle($input);
+            $traceManager?->finishSpan($span, ['tool.result' => $this->normalizeToolResult($result)]);
+            $traceManager?->dispatch(new ToolCallFinished($tool->name(), $result));
+
+            return $result;
+        } catch (Throwable $throwable) {
+            $traceManager?->failSpan($span, $throwable);
+            $traceManager?->dispatch(new ToolCallFailed($tool->name(), $throwable));
+
+            throw $throwable;
+        }
+    }
+
+    protected function traceManager(): ?TraceManager
+    {
+        if ($this->traceManager) {
+            return $this->traceManager;
+        }
+
+        if (! function_exists('app')) {
+            return null;
+        }
+
+        try {
+            return app(TraceManager::class);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -49,6 +49,13 @@ Publique a configuração:
 php artisan vendor:publish --tag=agents-config
 ```
 
+Publique as migrations quando quiser memória ou observabilidade com banco de dados:
+
+```bash
+php artisan vendor:publish --tag=agents-migrations
+php artisan migrate
+```
+
 Configure o `.env`:
 
 ```env
@@ -66,6 +73,34 @@ FIREWORKS_API_KEY=
 ```
 
 Você só precisa preencher a chave do provider que for usar primeiro.
+
+## 1.1. Observabilidade
+
+Observabilidade é opt-in e armazena traces no banco quando estiver habilitada e as migrations estiverem instaladas. Os traces incluem execuções de agentes, chamadas de modelo, chamadas de ferramentas, delegação do supervisor, workflows, nós de workflow, uso de tokens, latência, provider, modelo e metadados opcionais de custo.
+
+```env
+AGENTS_OBSERVABILITY_ENABLED=true
+AGENTS_OBSERVABILITY_STORE=database
+AGENTS_OBSERVABILITY_DASHBOARD_ENABLED=true
+AGENTS_OBSERVABILITY_DASHBOARD_ROUTE=/agents/observability/traces
+```
+
+As respostas incluem o id do trace:
+
+```php
+$response = LaravelAgents::agent(ResearchAgent::class)->generate('Pesquise isto.');
+
+$traceId = $response->meta['trace_id'];
+```
+
+Com o dashboard habilitado, use estes endpoints JSON:
+
+```text
+GET /agents/observability/traces
+GET /agents/observability/traces/{traceId}
+```
+
+Eventos Laravel são disparados para hooks de ciclo de vida de agentes, modelos, ferramentas e workflows. Para telemetria externa, registre sua própria implementação de `TraceExporter` ou adapte `OpenTelemetryTraceExporter`.
 
 ## 2. Testando Um Modelo Diretamente
 

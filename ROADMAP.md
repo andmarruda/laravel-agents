@@ -48,7 +48,7 @@ Goal: expose and consume external tools through Model Context Protocol.
 - Authentication hooks.
 - Per-agent allowed MCP servers.
 
-## v0.5 Observability
+## 0.5 Observability
 
 Goal: make agent runs debuggable in production.
 

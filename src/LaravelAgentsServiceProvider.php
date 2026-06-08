@@ -16,6 +16,15 @@ use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Memory\DatabaseLongTermAdapter;
 use Andmarruda\LaravelAgents\Memory\RedisShortTermAdapter;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
+use Andmarruda\LaravelAgents\Observability\Contracts\TraceExporter;
+use Andmarruda\LaravelAgents\Observability\Contracts\TraceStore;
+use Andmarruda\LaravelAgents\Observability\Exporters\NullTraceExporter;
+use Andmarruda\LaravelAgents\Observability\Http\TraceDashboardController;
+use Andmarruda\LaravelAgents\Observability\Stores\DatabaseTraceStore;
+use Andmarruda\LaravelAgents\Observability\Stores\NullTraceStore;
+use Andmarruda\LaravelAgents\Observability\Support\CostCalculator;
+use Andmarruda\LaravelAgents\Observability\Support\LaravelEventDispatcher;
+use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Illuminate\Support\ServiceProvider;
 
 class LaravelAgentsServiceProvider extends ServiceProvider
@@ -25,7 +34,10 @@ class LaravelAgentsServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/agents.php', 'agents');
 
         $this->app->singleton(ModelRouter::class, function ($app) {
-            return new ModelRouter($app['config']->get('agents', []));
+            return new ModelRouter(
+                $app['config']->get('agents', []),
+                $app->make(TraceManager::class),
+            );
         });
 
         $this->app->singleton(ImageRouter::class, function ($app) {
@@ -69,12 +81,49 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             return new HttpMcpController($app->make(McpRequestHandler::class));
         });
 
+        $this->app->singleton(CostCalculator::class, function ($app) {
+            return new CostCalculator($app['config']->get('agents.observability.pricing', []));
+        });
+
+        $this->app->singleton(TraceExporter::class, fn () => new NullTraceExporter());
+
+        $this->app->singleton(TraceStore::class, function ($app) {
+            if (! $app['config']->get('agents.observability.enabled', false)) {
+                return new NullTraceStore();
+            }
+
+            if ($app['config']->get('agents.observability.store', 'database') !== 'database') {
+                return new NullTraceStore();
+            }
+
+            return new DatabaseTraceStore(
+                $app['db']->connection($app['config']->get('agents.observability.connection')),
+                $app['config']->get('agents.observability.trace_table', 'agent_traces'),
+                $app['config']->get('agents.observability.span_table', 'agent_spans'),
+            );
+        });
+
+        $this->app->singleton(TraceManager::class, function ($app) {
+            return new TraceManager(
+                $app->make(TraceStore::class),
+                $app->make(TraceExporter::class),
+                $app->make(CostCalculator::class),
+                new LaravelEventDispatcher(),
+                (bool) $app['config']->get('agents.observability.enabled', false),
+            );
+        });
+
+        $this->app->singleton(TraceDashboardController::class, function ($app) {
+            return new TraceDashboardController($app->make(TraceStore::class));
+        });
+
         $this->app->singleton(LaravelAgentsManager::class, function ($app) {
             return new LaravelAgentsManager(
                 $app->make(ModelRouter::class),
                 $app->make(ImageRouter::class),
                 $app->make(AgentKernel::class),
                 $app->make(McpToolRegistry::class),
+                $app->make(TraceManager::class),
             );
         });
 
@@ -113,6 +162,19 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 );
         }
 
+        if (
+            $this->app['config']->get('agents.observability.dashboard.enabled', false)
+            && $this->app->bound('router')
+        ) {
+            $route = $this->app['config']->get('agents.observability.dashboard.route', '/agents/observability/traces');
+            $this->app['router']
+                ->middleware($this->app['config']->get('agents.observability.dashboard.middleware', ['web']))
+                ->get($route, [TraceDashboardController::class, 'index']);
+            $this->app['router']
+                ->middleware($this->app['config']->get('agents.observability.dashboard.middleware', ['web']))
+                ->get($route.'/{traceId}', [TraceDashboardController::class, 'show']);
+        }
+
         $this->publishes([
             __DIR__.'/../config/agents.php' => config_path('agents.php'),
         ], 'agents-config');
@@ -120,6 +182,12 @@ class LaravelAgentsServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../database/migrations/create_agent_memories_table.php' => database_path(
                 'migrations/'.date('Y_m_d_His').'_create_agent_memories_table.php'
+            ),
+        ], 'agents-migrations');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/create_agent_observability_tables.php' => database_path(
+                'migrations/'.date('Y_m_d_His', time() + 1).'_create_agent_observability_tables.php'
             ),
         ], 'agents-migrations');
     }

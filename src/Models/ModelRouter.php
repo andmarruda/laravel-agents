@@ -6,6 +6,8 @@ use InvalidArgumentException;
 use Andmarruda\LaravelAgents\Adapters\Models\AnthropicModelAdapter;
 use Andmarruda\LaravelAgents\Adapters\Models\FireworksModelAdapter;
 use Andmarruda\LaravelAgents\Adapters\Models\OpenAiModelAdapter;
+use Andmarruda\LaravelAgents\Observability\ObservableModelPort;
+use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Andmarruda\LaravelAgents\Ports\ModelPort;
 
 class ModelRouter
@@ -15,6 +17,7 @@ class ModelRouter
      */
     public function __construct(
         protected array $config,
+        protected ?TraceManager $traceManager = null,
     ) {
     }
 
@@ -26,12 +29,18 @@ class ModelRouter
 
         [$provider, $modelName] = $this->parseModel($model);
 
-        return match ($provider) {
+        $port = match ($provider) {
             'openai' => new OpenAiModelAdapter($modelName, $this->providerConfig('openai'), $this->modelConfig()),
             'anthropic', 'claude' => new AnthropicModelAdapter($modelName, $this->providerConfig('anthropic'), $this->modelConfig()),
             'fireworks' => new FireworksModelAdapter($modelName, $this->providerConfig('fireworks'), $this->modelConfig()),
             default => throw new InvalidArgumentException("Unsupported model provider [{$provider}]."),
         };
+
+        if ($this->traceManager?->enabled()) {
+            return new ObservableModelPort($port, $this->traceManager, $model);
+        }
+
+        return $port;
     }
 
     /**
