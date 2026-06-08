@@ -74,6 +74,40 @@ return [
         ],
     ],
 
+    'rag' => [
+        'embeddings' => [
+            'default_model' => env('AGENTS_RAG_EMBEDDING_MODEL', 'openai/text-embedding-3-small'),
+            'dimensions' => env('AGENTS_RAG_EMBEDDING_DIMENSIONS') !== null
+                ? (int) env('AGENTS_RAG_EMBEDDING_DIMENSIONS')
+                : null,
+            'batch_size' => (int) env('AGENTS_RAG_EMBEDDING_BATCH_SIZE', 100),
+            'timeout' => (int) env('AGENTS_RAG_EMBEDDING_TIMEOUT', 60),
+        ],
+
+        'chunking' => [
+            'size' => (int) env('AGENTS_RAG_CHUNK_SIZE', 1000),
+            'overlap' => (int) env('AGENTS_RAG_CHUNK_OVERLAP', 150),
+        ],
+
+        'vector_store' => [
+            'default' => env('AGENTS_RAG_VECTOR_STORE', 'memory'),
+            'stores' => [
+                'memory' => [],
+                'pgvector' => [
+                    'connection' => env('AGENTS_RAG_PGVECTOR_CONNECTION'),
+                    'table' => env('AGENTS_RAG_PGVECTOR_TABLE', 'agent_rag_vectors'),
+                ],
+                'qdrant' => [
+                    'base_url' => env('QDRANT_URL', 'http://localhost:6333'),
+                    'api_key' => env('QDRANT_API_KEY'),
+                    'collection' => env('QDRANT_COLLECTION', 'laravel_agents'),
+                    'timeout' => (int) env('AGENTS_RAG_QDRANT_TIMEOUT', 60),
+                    'auto_create_collection' => env('AGENTS_RAG_QDRANT_AUTO_CREATE_COLLECTION', true),
+                ],
+            ],
+        ],
+    ],
+
     'mcp' => [
         'enabled' => env('AGENTS_MCP_ENABLED', false),
 

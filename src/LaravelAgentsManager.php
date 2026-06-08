@@ -10,6 +10,13 @@ use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Andmarruda\LaravelAgents\Observability\TraceManager;
 use Andmarruda\LaravelAgents\Ports\ImageGenerationPort;
 use Andmarruda\LaravelAgents\Ports\ModelPort;
+use Andmarruda\LaravelAgents\RAG\Contracts\Chunker;
+use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
+use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
+use Andmarruda\LaravelAgents\RAG\Embeddings\EmbeddingRouter;
+use Andmarruda\LaravelAgents\RAG\RagIndexer;
+use Andmarruda\LaravelAgents\RAG\Retriever;
+use Andmarruda\LaravelAgents\RAG\VectorStores\VectorStoreRouter;
 use Andmarruda\LaravelAgents\Workflows\Workflow;
 
 class LaravelAgentsManager
@@ -28,6 +35,9 @@ class LaravelAgentsManager
         protected AgentKernel $kernel,
         protected ?McpToolRegistry $mcpToolRegistry = null,
         protected ?TraceManager $traceManager = null,
+        protected ?EmbeddingRouter $embeddingRouter = null,
+        protected ?VectorStoreRouter $vectorStoreRouter = null,
+        protected ?Chunker $chunker = null,
     ) {
     }
 
@@ -66,6 +76,36 @@ class LaravelAgentsManager
     public function image(?string $model = null): ImageGenerationPort
     {
         return $this->images->for($model);
+    }
+
+    public function embeddings(?string $model = null): EmbeddingProvider
+    {
+        return $this->embeddingRouter?->for($model)
+            ?? throw new \RuntimeException('RAG embedding router is not configured.');
+    }
+
+    public function vectorStore(?string $driver = null): VectorStore
+    {
+        return $this->vectorStoreRouter?->for($driver)
+            ?? throw new \RuntimeException('RAG vector store router is not configured.');
+    }
+
+    public function indexer(?string $embeddingModel = null, ?string $vectorStore = null): RagIndexer
+    {
+        return new RagIndexer(
+            $this->chunker ?? throw new \RuntimeException('RAG chunker is not configured.'),
+            $this->embeddings($embeddingModel),
+            $this->vectorStore($vectorStore),
+        );
+    }
+
+    public function retriever(?string $embeddingModel = null, ?string $vectorStore = null, ?string $namespace = null): Retriever
+    {
+        return new Retriever(
+            $this->embeddings($embeddingModel),
+            $this->vectorStore($vectorStore),
+            namespace: $namespace,
+        );
     }
 
     /**

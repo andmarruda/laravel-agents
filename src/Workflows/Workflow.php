@@ -79,11 +79,11 @@ class Workflow
     /**
      * Add a deterministic step to the workflow pipeline.
      *
-     * @param string|callable $nameOrStep Step name, step class name, or callable handler.
-     * @param string|callable|null $step Optional step class name or callable handler when the first argument is a name.
+     * @param string|callable|Step $nameOrStep Step name, step instance, step class name, or callable handler.
+     * @param string|callable|Step|null $step Optional step instance, class name, or callable handler when the first argument is a name.
      * @return static
      */
-    public function then(string|callable $nameOrStep, string|callable|null $step = null): static
+    public function then(string|callable|Step $nameOrStep, string|callable|Step|null $step = null): static
     {
         [$name, $handler] = $this->normalizeNamedHandler($nameOrStep, $step);
 
@@ -749,11 +749,11 @@ class Workflow
     /**
      * Normalize a fluent step definition into a step name and handler.
      *
-     * @param string|callable $nameOrStep Step name, step class name, or callable handler.
-     * @param string|callable|null $step Optional handler when the first argument is a step name.
+     * @param string|callable|Step $nameOrStep Step name, step instance, step class name, or callable handler.
+     * @param string|callable|Step|null $step Optional handler when the first argument is a step name.
      * @return array{0: string, 1: mixed}
      */
-    protected function normalizeNamedHandler(string|callable $nameOrStep, string|callable|null $step): array
+    protected function normalizeNamedHandler(string|callable|Step $nameOrStep, string|callable|Step|null $step): array
     {
         if ($step !== null) {
             if (! is_string($nameOrStep)) {
@@ -765,6 +765,10 @@ class Workflow
 
         if (is_string($nameOrStep) && class_exists($nameOrStep)) {
             return [$this->shortName($nameOrStep), $nameOrStep];
+        }
+
+        if ($nameOrStep instanceof Step) {
+            return [$this->shortName($nameOrStep::class), $nameOrStep];
         }
 
         if (is_callable($nameOrStep)) {

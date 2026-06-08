@@ -58,7 +58,7 @@ Goal: make agent runs debuggable in production.
 - Optional dashboard routes.
 - Export adapters for OpenTelemetry-style traces.
 
-## v0.6 RAG
+## 0.6 RAG
 
 Goal: retrieval-augmented agents with Laravel-friendly storage.
 

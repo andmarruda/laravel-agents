@@ -13,6 +13,8 @@ This version focuses on the orchestration core:
 
 For MCP usage, see [MCP Usage Guide](mcp-en.md). It covers remote MCP clients, a Laravel MCP server, controller and route adapters, authentication hooks, and per-agent MCP permissions.
 
+For retrieval-augmented generation, see [RAG Usage Guide](rag-en.md). It covers document loaders, chunking, embeddings, pgvector, Qdrant, retriever tools, and workflow steps.
+
 ## 1. Installation
 
 If the package is already available through Composer/Packagist, run this in a Laravel project:

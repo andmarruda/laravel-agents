@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Andmarruda\LaravelAgents\Ports\ImageGenerationPort image(?string $model = null)
  * @method static \Andmarruda\LaravelAgents\Agents\Agent agent(string|\Andmarruda\LaravelAgents\Agents\Agent $agent)
  * @method static \Andmarruda\LaravelAgents\Workflows\Workflow workflow(string|\Andmarruda\LaravelAgents\Workflows\Workflow|null $workflow = null)
+ * @method static \Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider embeddings(?string $model = null)
+ * @method static \Andmarruda\LaravelAgents\RAG\Contracts\VectorStore vectorStore(?string $driver = null)
+ * @method static \Andmarruda\LaravelAgents\RAG\RagIndexer indexer(?string $embeddingModel = null, ?string $vectorStore = null)
+ * @method static \Andmarruda\LaravelAgents\RAG\Retriever retriever(?string $embeddingModel = null, ?string $vectorStore = null, ?string $namespace = null)
  */
 class LaravelAgents extends Facade
 {

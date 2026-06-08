@@ -17,16 +17,18 @@ This package is in early alpha. The current implementation is intentionally focu
 - Deterministic workflows with steps, branches, parallel fan-out, loops, and forEach processing.
 - Workflow input/output schemas, queued jobs, suspend/resume snapshots, and human approval steps.
 - Production observability with traces, spans, model usage, cost metadata, lifecycle events, storage, and optional JSON dashboard routes.
+- Retrieval-augmented generation with loaders, deterministic chunking, OpenAI embeddings, pgvector, Qdrant, retriever tools, and workflow steps.
 - Ports & Adapters boundary for model providers.
 - Laravel package auto-discovery and publishable config.
 
 ## Planned Next
 
-- RAG with embeddings and vector stores.
 - Guardrails for input, output, and tool execution.
 - Streaming and structured output helpers.
 
 See [ROADMAP.md](ROADMAP.md) for the version plan.
+
+RAG documentation: [English](docs/usage/rag-en.md) | [Português](docs/usage/rag-pt-BR.md).
 
 ## Installation
 
@@ -271,6 +273,32 @@ The dashboard exposes:
 - `GET /agents/observability/traces/{traceId}`
 
 The package also dispatches Laravel lifecycle events for agent, model, tool, and workflow activity, and includes an OpenTelemetry-shaped exporter contract for forwarding traces to your own telemetry pipeline.
+
+## RAG
+
+Index Laravel-friendly document loaders into memory, PostgreSQL/pgvector, Qdrant, or a custom vector store:
+
+```php
+use Andmarruda\LaravelAgents\Facades\LaravelAgents;
+use Andmarruda\LaravelAgents\RAG\Loaders\FileDocumentLoader;
+
+$summary = LaravelAgents::indexer()->index(
+    new FileDocumentLoader(storage_path('knowledge/guide.md')),
+    namespace: 'product-docs',
+);
+
+$results = LaravelAgents::retriever(namespace: 'product-docs')
+    ->retrieve('How do agents call tools?', limit: 5);
+```
+
+Publish the dedicated PostgreSQL/pgvector migration only when using that store:
+
+```bash
+php artisan vendor:publish --tag=agents-rag-pgvector-migrations
+php artisan migrate
+```
+
+See the complete [RAG usage guide](docs/usage/rag-en.md) for loaders, metadata filters, retriever tools, workflow steps, pgvector, Qdrant, and custom adapters.
 
 ## Deterministic Workflows
 

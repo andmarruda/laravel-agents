@@ -25,6 +25,15 @@ use Andmarruda\LaravelAgents\Observability\Stores\NullTraceStore;
 use Andmarruda\LaravelAgents\Observability\Support\CostCalculator;
 use Andmarruda\LaravelAgents\Observability\Support\LaravelEventDispatcher;
 use Andmarruda\LaravelAgents\Observability\TraceManager;
+use Andmarruda\LaravelAgents\RAG\Chunking\RecursiveCharacterChunker;
+use Andmarruda\LaravelAgents\RAG\Contracts\Chunker;
+use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
+use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
+use Andmarruda\LaravelAgents\RAG\Embeddings\EmbeddingRouter;
+use Andmarruda\LaravelAgents\RAG\RagIndexer;
+use Andmarruda\LaravelAgents\RAG\Retriever;
+use Andmarruda\LaravelAgents\RAG\VectorStores\InMemoryVectorStore;
+use Andmarruda\LaravelAgents\RAG\VectorStores\VectorStoreRouter;
 use Illuminate\Support\ServiceProvider;
 
 class LaravelAgentsServiceProvider extends ServiceProvider
@@ -117,6 +126,37 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             return new TraceDashboardController($app->make(TraceStore::class));
         });
 
+        $this->app->singleton(EmbeddingRouter::class, function ($app) {
+            return new EmbeddingRouter(
+                $app['config']->get('agents', []),
+                $app->make(\Illuminate\Http\Client\Factory::class),
+            );
+        });
+
+        $this->app->singleton(InMemoryVectorStore::class, fn () => new InMemoryVectorStore());
+        $this->app->singleton(VectorStoreRouter::class, function ($app) {
+            return new VectorStoreRouter($app['config']->get('agents', []), $app);
+        });
+
+        $this->app->singleton(Chunker::class, function ($app) {
+            return new RecursiveCharacterChunker(
+                (int) $app['config']->get('agents.rag.chunking.size', 1000),
+                (int) $app['config']->get('agents.rag.chunking.overlap', 150),
+            );
+        });
+
+        $this->app->bind(EmbeddingProvider::class, fn ($app) => $app->make(EmbeddingRouter::class)->for());
+        $this->app->bind(VectorStore::class, fn ($app) => $app->make(VectorStoreRouter::class)->for());
+        $this->app->bind(RagIndexer::class, fn ($app) => new RagIndexer(
+            $app->make(Chunker::class),
+            $app->make(EmbeddingProvider::class),
+            $app->make(VectorStore::class),
+        ));
+        $this->app->bind(Retriever::class, fn ($app) => new Retriever(
+            $app->make(EmbeddingProvider::class),
+            $app->make(VectorStore::class),
+        ));
+
         $this->app->singleton(LaravelAgentsManager::class, function ($app) {
             return new LaravelAgentsManager(
                 $app->make(ModelRouter::class),
@@ -124,6 +164,9 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $app->make(AgentKernel::class),
                 $app->make(McpToolRegistry::class),
                 $app->make(TraceManager::class),
+                $app->make(EmbeddingRouter::class),
+                $app->make(VectorStoreRouter::class),
+                $app->make(Chunker::class),
             );
         });
 
@@ -190,5 +233,11 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 'migrations/'.date('Y_m_d_His', time() + 1).'_create_agent_observability_tables.php'
             ),
         ], 'agents-migrations');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/create_agent_rag_pgvector_table.php' => database_path(
+                'migrations/'.date('Y_m_d_His', time() + 2).'_create_agent_rag_pgvector_table.php'
+            ),
+        ], 'agents-rag-pgvector-migrations');
     }
 }

@@ -13,6 +13,8 @@ O foco desta versão é o core de orquestração:
 
 Para uso com MCP, veja [Guia de Uso: MCP](mcp-pt-BR.md). Ele cobre clientes MCP remotos, servidor MCP em Laravel, adapters para controllers e rotas, hooks de autenticação e permissões MCP por agente.
 
+Para retrieval-augmented generation, veja [Guia de Uso: RAG](rag-pt-BR.md). Ele cobre document loaders, chunking, embeddings, pgvector, Qdrant, ferramentas de retrieval e steps para workflows.
+
 ## 1. Instalação
 
 Se o pacote já estiver disponível via Composer/Packagist, rode em um projeto Laravel:
