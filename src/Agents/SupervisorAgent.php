@@ -41,11 +41,13 @@ abstract class SupervisorAgent extends Agent
             'agent.class' => static::class,
             'input.length' => strlen($input),
         ]);
-        $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
         $steps = [];
-        $task = $input;
 
         try {
+            $input = $this->applyInputGuardrails($input);
+            $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
+            $task = $input;
+
             for ($step = 1; $step <= $this->maxSteps; $step++) {
                 $decision = $this->decide($task, $steps, $context);
                 $action = $decision['action'] ?? null;
@@ -75,6 +77,7 @@ abstract class SupervisorAgent extends Agent
 
                 $agent->setModelRouter($this->modelRouter());
                 $agent->setTraceManager($traceManager);
+                $agent->setGuardrailPipeline($this->guardrailPipeline());
 
                 $delegateSpan = $traceManager?->startSpan('agent.delegate', 'agent', [
                     'agent.supervisor' => $this->name(),
@@ -121,6 +124,8 @@ abstract class SupervisorAgent extends Agent
             $traceManager?->failTrace($trace, $throwable);
 
             throw $throwable;
+        } finally {
+            $this->clearRunGuardrails();
         }
     }
 
@@ -153,10 +158,16 @@ abstract class SupervisorAgent extends Agent
      */
     protected function decide(string $task, array $steps, array $context): array
     {
-        $response = $this->generateWithObservability($this->decisionMessages($task, $steps, $context), [
+        $options = $this->options;
+        $this->options = [
             ...$this->options,
             'temperature' => $this->options['temperature'] ?? 0.1,
-        ]);
+        ];
+        try {
+            [$response] = $this->generateWithGuardrails($this->decisionMessages($task, $steps, $context));
+        } finally {
+            $this->options = $options;
+        }
 
         $decision = $response->json();
 

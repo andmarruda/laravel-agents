@@ -7,6 +7,8 @@ use Andmarruda\LaravelAgents\MCP\Data\McpToolDefinition;
 use Andmarruda\LaravelAgents\MCP\Data\McpToolResult;
 use Andmarruda\LaravelAgents\MCP\Schema\JsonSchemaValidator;
 use Andmarruda\LaravelAgents\MCP\Schema\ToolSchemaConverter;
+use Andmarruda\LaravelAgents\Guardrails\Data\GuardrailContext;
+use Andmarruda\LaravelAgents\Guardrails\GuardrailPipeline;
 use Throwable;
 
 class McpServer
@@ -19,6 +21,7 @@ class McpServer
         protected ?ToolSchemaConverter $schemaConverter = null,
         protected ?JsonSchemaValidator $schemaValidator = null,
         protected int $toolsPageSize = 100,
+        protected ?GuardrailPipeline $guardrailPipeline = null,
     ) {
         $this->schemaConverter ??= new ToolSchemaConverter();
         $this->schemaValidator ??= new JsonSchemaValidator();
@@ -169,8 +172,25 @@ class McpServer
 
         try {
             $this->schemaValidator->validate($definition->schema, $arguments);
+            $arguments = $this->guardrailPipeline?->run(
+                $arguments,
+                new GuardrailContext('tool', [
+                    'tool_schema' => $definition->schema,
+                    'tool_class' => $tool::class,
+                    'transport' => 'mcp',
+                ], tool: $tool->name()),
+            )->value ?? $arguments;
 
-            return (new McpToolResult($tool->handle($arguments)))->toMcpArray();
+            $result = $tool->handle($arguments);
+            $result = $this->guardrailPipeline?->run(
+                $result,
+                new GuardrailContext('tool', [
+                    'tool_class' => $tool::class,
+                    'transport' => 'mcp',
+                ], tool: $tool->name(), phase: 'after'),
+            )->value ?? $result;
+
+            return (new McpToolResult($result))->toMcpArray();
         } catch (Throwable $exception) {
             return (new McpToolResult([
                 'type' => 'tool_execution_error',

@@ -4,6 +4,8 @@ namespace Andmarruda\LaravelAgents;
 
 use Andmarruda\LaravelAgents\Agents\Agent;
 use Andmarruda\LaravelAgents\Images\ImageRouter;
+use Andmarruda\LaravelAgents\Guardrails\GuardrailPipeline;
+use Andmarruda\LaravelAgents\Guardrails\Contracts\ApprovalStore;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
 use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
@@ -38,6 +40,8 @@ class LaravelAgentsManager
         protected ?EmbeddingRouter $embeddingRouter = null,
         protected ?VectorStoreRouter $vectorStoreRouter = null,
         protected ?Chunker $chunker = null,
+        protected ?GuardrailPipeline $guardrailPipeline = null,
+        protected ?ApprovalStore $approvalStore = null,
     ) {
     }
 
@@ -129,6 +133,10 @@ class LaravelAgentsManager
             $instance->setTraceManager($this->traceManager);
         }
 
+        if ($this->guardrailPipeline) {
+            $instance->setGuardrailPipeline($this->guardrailPipeline);
+        }
+
         $instance->bootAgent();
 
         return $instance;
@@ -144,11 +152,15 @@ class LaravelAgentsManager
     public function workflow(string|Workflow|null $workflow = null): Workflow
     {
         if ($workflow === null) {
-            return Workflow::make()->setTraceManager($this->traceManager);
+            return Workflow::make()
+                ->setTraceManager($this->traceManager)
+                ->setApprovalStore($this->approvalStore);
         }
 
         $instance = is_string($workflow) ? app($workflow) : $workflow;
 
-        return $instance->setTraceManager($this->traceManager);
+        return $instance
+            ->setTraceManager($this->traceManager)
+            ->setApprovalStore($this->approvalStore);
     }
 }

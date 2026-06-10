@@ -106,4 +106,22 @@ class ObservabilityTest extends TestCase
         $this->assertSame('unit', $payloads[0]['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['name']);
         $this->assertSame('internal', $payloads[0]['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['kind']);
     }
+
+    public function test_trace_attributes_redact_configured_sensitive_keys(): void
+    {
+        $store = new InMemoryTraceStore();
+        $traces = new TraceManager(
+            $store,
+            new NullTraceExporter(),
+            new CostCalculator(),
+            enabled: true,
+            redactKeys: ['token'],
+        );
+        $trace = $traces->startTrace('secure', ['nested' => ['token' => 'secret', 'safe' => 'value']]);
+        $traces->finishTrace($trace);
+
+        $stored = $store->get($trace->id);
+        $this->assertSame('[REDACTED]', $stored->attributes['nested']['token']);
+        $this->assertSame('value', $stored->attributes['nested']['safe']);
+    }
 }

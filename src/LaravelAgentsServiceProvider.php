@@ -5,6 +5,10 @@ namespace Andmarruda\LaravelAgents;
 use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Images\ImageRouter;
+use Andmarruda\LaravelAgents\Guardrails\Contracts\ApprovalStore;
+use Andmarruda\LaravelAgents\Guardrails\GuardrailPipeline;
+use Andmarruda\LaravelAgents\Guardrails\Stores\DatabaseApprovalStore;
+use Andmarruda\LaravelAgents\Guardrails\Stores\InMemoryApprovalStore;
 use Andmarruda\LaravelAgents\Kernel\AgentKernel;
 use Andmarruda\LaravelAgents\MCP\Auth\AuthorizesMcpRequests;
 use Andmarruda\LaravelAgents\MCP\Schema\JsonSchemaValidator;
@@ -79,6 +83,7 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $authorizer instanceof AuthorizesMcpRequests ? $authorizer : null,
                 $app->make(ToolSchemaConverter::class),
                 $app->make(JsonSchemaValidator::class),
+                guardrailPipeline: $app->make(GuardrailPipeline::class),
             );
         });
 
@@ -119,11 +124,38 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $app->make(CostCalculator::class),
                 new LaravelEventDispatcher(),
                 (bool) $app['config']->get('agents.observability.enabled', false),
+                $app['config']->get('agents.guardrails.redact_keys', []),
             );
         });
 
         $this->app->singleton(TraceDashboardController::class, function ($app) {
             return new TraceDashboardController($app->make(TraceStore::class));
+        });
+
+        $this->app->singleton(ApprovalStore::class, function ($app) {
+            if ($app['config']->get('agents.guardrails.approvals.store', 'memory') === 'database') {
+                return new DatabaseApprovalStore(
+                    $app['db']->connection($app['config']->get('agents.guardrails.approvals.connection')),
+                    $app['config']->get('agents.guardrails.approvals.table', 'agent_approvals'),
+                    new LaravelEventDispatcher(),
+                );
+            }
+
+            return new InMemoryApprovalStore(new LaravelEventDispatcher());
+        });
+
+        $this->app->singleton(GuardrailPipeline::class, function ($app) {
+            $guardrails = [];
+            foreach ($app['config']->get('agents.guardrails.global', []) as $guardrail) {
+                $guardrails[] = is_string($guardrail) ? $app->make($guardrail) : $guardrail;
+            }
+
+            return new GuardrailPipeline(
+                $guardrails,
+                (int) $app['config']->get('agents.guardrails.max_policies', 100),
+                $app->make(ApprovalStore::class),
+                $app->make(TraceManager::class),
+            );
         });
 
         $this->app->singleton(EmbeddingRouter::class, function ($app) {
@@ -167,6 +199,8 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $app->make(EmbeddingRouter::class),
                 $app->make(VectorStoreRouter::class),
                 $app->make(Chunker::class),
+                $app->make(GuardrailPipeline::class),
+                $app->make(ApprovalStore::class),
             );
         });
 
@@ -239,5 +273,11 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 'migrations/'.date('Y_m_d_His', time() + 2).'_create_agent_rag_pgvector_table.php'
             ),
         ], 'agents-rag-pgvector-migrations');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/create_agent_approvals_table.php' => database_path(
+                'migrations/'.date('Y_m_d_His', time() + 3).'_create_agent_approvals_table.php'
+            ),
+        ], 'agents-migrations');
     }
 }

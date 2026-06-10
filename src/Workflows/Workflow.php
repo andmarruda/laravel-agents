@@ -3,6 +3,8 @@
 namespace Andmarruda\LaravelAgents\Workflows;
 
 use Closure;
+use Andmarruda\LaravelAgents\Guardrails\Approvals\ApprovalRequest;
+use Andmarruda\LaravelAgents\Guardrails\Contracts\ApprovalStore;
 use Andmarruda\LaravelAgents\Observability\Events\WorkflowFailed;
 use Andmarruda\LaravelAgents\Observability\Events\WorkflowFinished;
 use Andmarruda\LaravelAgents\Observability\Events\WorkflowStarted;
@@ -34,6 +36,8 @@ class Workflow
 
     protected ?TraceManager $traceManager = null;
 
+    protected ?ApprovalStore $approvalStore = null;
+
     /**
      * Create a workflow instance with an optional display name.
      *
@@ -59,6 +63,13 @@ class Workflow
     public function setTraceManager(?TraceManager $traceManager): static
     {
         $this->traceManager = $traceManager;
+
+        return $this;
+    }
+
+    public function setApprovalStore(?ApprovalStore $approvalStore): static
+    {
+        $this->approvalStore = $approvalStore;
 
         return $this;
     }
@@ -380,6 +391,24 @@ class Workflow
 
             throw $throwable;
         }
+    }
+
+    public function resumeWithApproval(
+        WorkflowSnapshot|string $snapshot,
+        string $approvalId,
+        ?WorkflowStore $store = null,
+    ): WorkflowResponse {
+        $resolved = is_string($snapshot)
+            ? ($store?->get($snapshot) ?? throw new RuntimeException("Workflow snapshot [{$snapshot}] was not found."))
+            : $snapshot;
+
+        if (! $this->approvalStore) {
+            throw new RuntimeException('An approval store is required to resume with an approval request.');
+        }
+
+        $this->approvalStore->consume($approvalId, $resolved->data);
+
+        return $this->resume($resolved, ['approval_id' => $approvalId], $store);
     }
 
     /**
@@ -730,6 +759,12 @@ class Workflow
             'metadata' => $node['metadata'],
         ];
 
+        $approval = null;
+        if ($this->approvalStore) {
+            $approval = ApprovalRequest::create($node['name'], $input, metadata: $node['metadata']);
+            $this->approvalStore->put($approval);
+        }
+
         return new WorkflowSuspension(new WorkflowSnapshot(
             id: $this->newSnapshotId(),
             workflow: $this->name ?? static::class,
@@ -742,6 +777,7 @@ class Workflow
                 'name' => $node['name'],
                 'prompt' => $node['prompt'],
                 'metadata' => $node['metadata'],
+                'approval_id' => $approval?->id,
             ],
         ));
     }

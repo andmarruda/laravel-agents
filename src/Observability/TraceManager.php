@@ -31,6 +31,7 @@ class TraceManager
         protected CostCalculator $costs,
         protected LaravelEventDispatcher $events = new LaravelEventDispatcher(),
         protected bool $enabled = true,
+        protected array $redactKeys = [],
     ) {
     }
 
@@ -48,7 +49,7 @@ class TraceManager
             return null;
         }
 
-        $trace = new Trace($this->newId(), $name, new DateTimeImmutable(), $attributes);
+        $trace = new Trace($this->newId(), $name, new DateTimeImmutable(), $this->redact($attributes));
         $this->traceStack[] = $trace;
 
         return $trace;
@@ -63,7 +64,7 @@ class TraceManager
             return;
         }
 
-        $trace->finish($attributes);
+        $trace->finish($this->redact($attributes));
         $this->removeTrace($trace);
         $this->store->put($trace);
         $this->exporter->export($trace);
@@ -100,7 +101,7 @@ class TraceManager
             name: $name,
             kind: $kind,
             startedAt: new DateTimeImmutable(),
-            attributes: $attributes,
+            attributes: $this->redact($attributes),
         );
 
         $trace->addSpan($span);
@@ -118,7 +119,7 @@ class TraceManager
             return;
         }
 
-        $span->finish($attributes);
+        $span->finish($this->redact($attributes));
         $this->removeSpan($span);
     }
 
@@ -187,5 +188,23 @@ class TraceManager
     protected function newId(): string
     {
         return bin2hex(random_bytes(16));
+    }
+
+    protected function redact(mixed $value, ?string $key = null): mixed
+    {
+        if ($key !== null && in_array(strtolower($key), array_map('strtolower', $this->redactKeys), true)) {
+            return '[REDACTED]';
+        }
+
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $redacted = [];
+        foreach ($value as $itemKey => $item) {
+            $redacted[$itemKey] = $this->redact($item, is_string($itemKey) ? $itemKey : null);
+        }
+
+        return $redacted;
     }
 }

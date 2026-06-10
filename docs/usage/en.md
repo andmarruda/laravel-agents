@@ -15,6 +15,8 @@ For MCP usage, see [MCP Usage Guide](mcp-en.md). It covers remote MCP clients, a
 
 For retrieval-augmented generation, see [RAG Usage Guide](rag-en.md). It covers document loaders, chunking, embeddings, pgvector, Qdrant, retriever tools, and workflow steps.
 
+For safety and authorization controls, see [Guardrails](guardrails-en.md). It covers policies, schema validation, correction retries, tool permissions, approvals, and observability.
+
 ## 1. Installation
 
 If the package is already available through Composer/Packagist, run this in a Laravel project:

@@ -6,6 +6,13 @@ use Andmarruda\LaravelAgents\Contracts\Memory\LongTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Memory\ShortTermMemory;
 use Andmarruda\LaravelAgents\Contracts\Tool;
 use Andmarruda\LaravelAgents\Data\AgentResponse;
+use Andmarruda\LaravelAgents\Data\ModelResponse;
+use Andmarruda\LaravelAgents\Guardrails\CorrectionPolicy;
+use Andmarruda\LaravelAgents\Guardrails\Data\GuardrailContext;
+use Andmarruda\LaravelAgents\Guardrails\Enums\GuardrailDecision;
+use Andmarruda\LaravelAgents\Guardrails\Events\GuardrailRetrying;
+use Andmarruda\LaravelAgents\Guardrails\Exceptions\GuardrailRetryLimitException;
+use Andmarruda\LaravelAgents\Guardrails\GuardrailPipeline;
 use Andmarruda\LaravelAgents\MCP\Server\McpToolRegistry;
 use Andmarruda\LaravelAgents\Models\ModelRouter;
 use Andmarruda\LaravelAgents\Observability\Events\AgentRunFailed;
@@ -29,6 +36,8 @@ abstract class Agent
     protected ?McpToolRegistry $mcpToolRegistry = null;
 
     protected ?TraceManager $traceManager = null;
+
+    protected ?GuardrailPipeline $guardrailPipeline = null;
 
     protected ?string $name = null;
 
@@ -57,6 +66,38 @@ abstract class Agent
      */
     protected array $allowedMcpTools = [];
 
+    /**
+     * @var array<int, object>
+     */
+    protected array $inputGuardrails = [];
+
+    /**
+     * @var array<int, object>
+     */
+    protected array $outputGuardrails = [];
+
+    /**
+     * @var array<int, object>
+     */
+    protected array $toolGuardrailPolicies = [];
+
+    /**
+     * @var array<int, object>
+     */
+    protected array $runGuardrails = [];
+
+    /**
+     * @var array<int, object>
+     */
+    protected array $runToolGuardrails = [];
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected array $guardrailContext = [];
+
+    protected CorrectionPolicy $correctionPolicy;
+
     protected int $maxToolSteps = 4;
 
     protected bool $shortTermMemoryEnabled = false;
@@ -70,6 +111,7 @@ abstract class Agent
     public function __construct()
     {
         $this->tools = new ToolBag();
+        $this->correctionPolicy = new CorrectionPolicy();
     }
 
     abstract public function configure(): void;
@@ -106,6 +148,43 @@ abstract class Agent
         return $this;
     }
 
+    public function setGuardrailPipeline(?GuardrailPipeline $pipeline): static
+    {
+        $this->guardrailPipeline = $pipeline;
+
+        return $this;
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    public function withGuardrailContext(array $context): static
+    {
+        $this->guardrailContext = [...$this->guardrailContext, ...$context];
+
+        return $this;
+    }
+
+    /**
+     * @param array<int, object> $guardrails
+     */
+    public function withRunGuardrails(array $guardrails): static
+    {
+        $this->runGuardrails = [...$this->runGuardrails, ...$guardrails];
+
+        return $this;
+    }
+
+    /**
+     * @param array<int, object> $guardrails
+     */
+    public function withRunToolGuardrails(array $guardrails): static
+    {
+        $this->runToolGuardrails = [...$this->runToolGuardrails, ...$guardrails];
+
+        return $this;
+    }
+
     public function continueSession(string $sessionId): static
     {
         $this->sessionId = $sessionId;
@@ -123,19 +202,22 @@ abstract class Agent
             'agent.class' => static::class,
             'input.length' => strlen($input),
         ]);
-        $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
 
         try {
             if ($this->shortTermMemoryEnabled && $this->sessionId === null) {
                 $this->sessionId = (string) Str::uuid();
             }
 
+            $input = $this->applyInputGuardrails($input);
+            $traceManager?->dispatch(new AgentRunStarted($this->name(), $input, $context));
             $history = $this->loadShortTermHistory();
             $messages = $this->messages($input, $context, $history);
             $steps = [];
+            $correctionAttempts = 0;
 
             for ($step = 1; $step <= $this->maxToolSteps + 1; $step++) {
-                $response = $this->generateWithObservability($messages, $this->options);
+                [$response, $attempts] = $this->generateWithGuardrails($messages);
+                $correctionAttempts += $attempts;
 
                 $toolCall = $this->parseToolCall($response->json());
 
@@ -148,6 +230,7 @@ abstract class Agent
                         'provider' => $response->provider,
                         'usage' => $response->usage,
                         'tool_steps' => count($steps),
+                        'correction_attempts' => $correctionAttempts,
                         'trace_id' => $trace?->id,
                     ], $this->sessionId);
                     $traceManager?->dispatch(new AgentRunFinished($this->name(), $agentResponse));
@@ -157,12 +240,19 @@ abstract class Agent
                 }
 
                 $tool = $this->tools->get($toolCall['tool']);
-                $toolResult = $this->handleToolWithObservability($tool, $toolCall['input']);
+                $toolInput = $this->guardrailPipeline()->run(
+                    $toolCall['input'],
+                    $this->guardrailContext('tool', $tool, 'before')
+                        ->with('tool_schema', $tool->schema())
+                        ->with('tool_class', $tool::class),
+                    [...$this->toolGuardrailPolicies, ...$this->runToolGuardrails],
+                )->value;
+                $toolResult = $this->handleToolWithObservability($tool, $toolInput);
                 $steps[] = [
                     'step' => $step,
                     'action' => 'tool',
                     'tool' => $tool->name(),
-                    'input' => $toolCall['input'],
+                    'input' => $toolInput,
                     'result' => $this->normalizeToolResult($toolResult),
                 ];
 
@@ -181,6 +271,7 @@ abstract class Agent
                 'provider' => $response->provider,
                 'usage' => $response->usage,
                 'tool_steps' => count($steps),
+                'correction_attempts' => $correctionAttempts,
                 'max_tool_steps_reached' => true,
                 'trace_id' => $trace?->id,
             ], $this->sessionId);
@@ -193,6 +284,8 @@ abstract class Agent
             $traceManager?->failTrace($trace, $throwable);
 
             throw $throwable;
+        } finally {
+            $this->clearRunGuardrails();
         }
     }
 
@@ -280,6 +373,34 @@ abstract class Agent
     protected function maxToolSteps(int $maxToolSteps): static
     {
         $this->maxToolSteps = $maxToolSteps;
+
+        return $this;
+    }
+
+    /**
+     * @param array<int, object> $guardrails
+     */
+    protected function guardrails(array $guardrails): static
+    {
+        $this->inputGuardrails = [...$this->inputGuardrails, ...$guardrails];
+        $this->outputGuardrails = [...$this->outputGuardrails, ...$guardrails];
+
+        return $this;
+    }
+
+    /**
+     * @param array<int, object> $guardrails
+     */
+    protected function toolGuardrails(array $guardrails): static
+    {
+        $this->toolGuardrailPolicies = [...$this->toolGuardrailPolicies, ...$guardrails];
+
+        return $this;
+    }
+
+    protected function corrections(int $maxAttempts = 2, int $backoffMilliseconds = 0): static
+    {
+        $this->correctionPolicy = new CorrectionPolicy($maxAttempts, $backoffMilliseconds);
 
         return $this;
     }
@@ -387,6 +508,58 @@ abstract class Agent
     }
 
     /**
+     * @param array<int, array{role: string, content: string}> $messages
+     * @return array{0: ModelResponse, 1: int}
+     */
+    protected function generateWithGuardrails(array $messages): array
+    {
+        for ($attempt = 1; $attempt <= $this->correctionPolicy->maxAttempts; $attempt++) {
+            $response = $this->generateWithObservability($messages, $this->options);
+            $result = $this->guardrailPipeline()->run(
+                $response->content,
+                $this->guardrailContext('model.output', attempt: $attempt),
+                [...$this->outputGuardrails, ...$this->runGuardrails],
+            );
+
+            if ($result->decision !== GuardrailDecision::Retry) {
+                if ($result->decision === GuardrailDecision::Modify && is_string($result->value)) {
+                    $response = new ModelResponse($result->value, $response->model, $response->provider, $response->usage, $response->raw);
+                }
+
+                return [$response, $attempt - 1];
+            }
+
+            if ($attempt >= $this->correctionPolicy->maxAttempts) {
+                throw new GuardrailRetryLimitException($result->violations);
+            }
+
+            $this->traceManager()?->dispatch(new GuardrailRetrying($attempt + 1, $result->violations));
+            $messages[] = ['role' => 'assistant', 'content' => $response->content];
+            $messages[] = ['role' => 'user', 'content' => $this->correctionPolicy->prompt($result->violations)];
+            $this->correctionPolicy->backoff();
+        }
+
+        throw new GuardrailRetryLimitException([]);
+    }
+
+    protected function applyInputGuardrails(string $input): string
+    {
+        $value = $this->guardrailPipeline()->run(
+            $input,
+            $this->guardrailContext('model.input'),
+            [...$this->inputGuardrails, ...$this->runGuardrails],
+        )->value;
+
+        if (! is_string($value)) {
+            throw new \Andmarruda\LaravelAgents\Guardrails\Exceptions\InvalidGuardrailResultException(
+                'Model input guardrails must return a string value.'
+            );
+        }
+
+        return $value;
+    }
+
+    /**
      * @param array<string, mixed> $input
      */
     protected function handleToolWithObservability(Tool $tool, array $input): mixed
@@ -401,6 +574,11 @@ abstract class Agent
 
         try {
             $result = $tool->handle($input);
+            $result = $this->guardrailPipeline()->run(
+                $this->normalizeToolResult($result),
+                $this->guardrailContext('tool', $tool, 'after')->with('tool_class', $tool::class),
+                [...$this->toolGuardrailPolicies, ...$this->runToolGuardrails],
+            )->value;
             $traceManager?->finishSpan($span, ['tool.result' => $this->normalizeToolResult($result)]);
             $traceManager?->dispatch(new ToolCallFinished($tool->name(), $result));
 
@@ -428,6 +606,44 @@ abstract class Agent
         } catch (Throwable) {
             return null;
         }
+    }
+
+    protected function guardrailPipeline(): GuardrailPipeline
+    {
+        if ($this->guardrailPipeline) {
+            return $this->guardrailPipeline;
+        }
+
+        try {
+            return $this->guardrailPipeline = function_exists('app')
+                ? app(GuardrailPipeline::class)
+                : new GuardrailPipeline(traces: $this->traceManager());
+        } catch (Throwable) {
+            return $this->guardrailPipeline = new GuardrailPipeline(traces: $this->traceManager());
+        }
+    }
+
+    protected function guardrailContext(
+        string $operation,
+        ?Tool $tool = null,
+        string $phase = 'before',
+        int $attempt = 1,
+    ): GuardrailContext {
+        return new GuardrailContext(
+            operation: $operation,
+            metadata: $this->guardrailContext,
+            agent: static::class,
+            tool: $tool?->name(),
+            phase: $phase,
+            attempt: $attempt,
+        );
+    }
+
+    protected function clearRunGuardrails(): void
+    {
+        $this->runGuardrails = [];
+        $this->runToolGuardrails = [];
+        $this->guardrailContext = [];
     }
 
     /**

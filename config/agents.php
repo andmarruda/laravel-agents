@@ -43,6 +43,23 @@ return [
         'max_steps' => (int) env('AGENTS_SUPERVISOR_MAX_STEPS', 12),
     ],
 
+    'guardrails' => [
+        'max_policies' => (int) env('AGENTS_GUARDRAILS_MAX_POLICIES', 100),
+
+        // Guardrail class names or instances applied to every matching operation.
+        'global' => [
+            \Andmarruda\LaravelAgents\Guardrails\Policies\ValidateToolArguments::class,
+        ],
+
+        'approvals' => [
+            'store' => env('AGENTS_APPROVAL_STORE', 'memory'),
+            'connection' => env('AGENTS_APPROVAL_DB_CONNECTION'),
+            'table' => env('AGENTS_APPROVAL_TABLE', 'agent_approvals'),
+        ],
+
+        'redact_keys' => ['password', 'token', 'secret', 'api_key', 'authorization'],
+    ],
+
     'memory' => [
         'short_term' => [
             'connection' => env('AGENTS_REDIS_CONNECTION', 'default'),
