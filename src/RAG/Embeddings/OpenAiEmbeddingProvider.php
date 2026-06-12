@@ -2,12 +2,12 @@
 
 namespace Andmarruda\LaravelAgents\RAG\Embeddings;
 
-use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
+use Andmarruda\LaravelAgents\RAG\Contracts\NamedEmbeddingProvider;
 use Illuminate\Http\Client\Factory;
 use InvalidArgumentException;
 use RuntimeException;
 
-class OpenAiEmbeddingProvider implements EmbeddingProvider
+class OpenAiEmbeddingProvider implements NamedEmbeddingProvider
 {
     /**
      * @param array<string, mixed> $config
@@ -91,6 +91,11 @@ class OpenAiEmbeddingProvider implements EmbeddingProvider
     public function dimensions(): ?int
     {
         return $this->configuredDimensions;
+    }
+
+    public function cacheNamespace(): string
+    {
+        return 'openai/'.$this->model.':'.($this->configuredDimensions ?? 'auto');
     }
 
     /**

@@ -5,6 +5,7 @@ namespace Andmarruda\LaravelAgents\RAG\VectorStores;
 use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
 use Andmarruda\LaravelAgents\RAG\Data\SearchResult;
 use Illuminate\Http\Client\Factory;
+use Andmarruda\LaravelAgents\RAG\Metadata\MetadataFilter;
 
 class QdrantVectorStore implements VectorStore
 {
@@ -37,8 +38,29 @@ class QdrantVectorStore implements VectorStore
             $this->ensureCollection(count($records[0]->vector));
         }
 
-        $this->deleteByDocument($documentId, $namespace);
         $this->writePoints($records, $namespace);
+
+        if ($records === []) {
+            $this->deleteByDocument($documentId, $namespace);
+
+            return;
+        }
+
+        $response = $this->request()->post($this->url('/points/delete?wait=true'), [
+            'filter' => [
+                'must' => [
+                    ['key' => 'document_id', 'match' => ['value' => $documentId]],
+                    ['key' => 'namespace', 'match' => ['value' => $namespace ?? 'default']],
+                ],
+                'must_not' => [[
+                    'has_id' => array_map(fn ($record) => $this->pointId($record->id), $records),
+                ]],
+            ],
+        ]);
+
+        if ($response->status() !== 404) {
+            $response->throw();
+        }
     }
 
     /**
@@ -67,16 +89,16 @@ class QdrantVectorStore implements VectorStore
 
     public function search(array $vector, int $limit = 5, array $filters = [], ?string $namespace = null): array
     {
+        $filters = MetadataFilter::normalize($filters);
         $must = [[
             'key' => 'namespace',
             'match' => ['value' => $namespace ?? 'default'],
         ]];
 
         foreach ($filters as $key => $value) {
-            $must[] = [
-                'key' => 'metadata.'.$key,
-                'match' => ['value' => $value],
-            ];
+            $must[] = $value === null
+                ? ['is_null' => ['key' => 'metadata.'.$key]]
+                : ['key' => 'metadata.'.$key, 'match' => ['value' => $value]];
         }
 
         $response = $this->request()->post($this->url('/points/search'), [

@@ -7,6 +7,7 @@ use Andmarruda\LaravelAgents\RAG\Data\SearchResult;
 use Andmarruda\LaravelAgents\RAG\Data\VectorRecord;
 use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
+use Andmarruda\LaravelAgents\RAG\Metadata\MetadataFilter;
 
 class PgVectorStore implements VectorStore
 {
@@ -49,15 +50,21 @@ class PgVectorStore implements VectorStore
 
     public function search(array $vector, int $limit = 5, array $filters = [], ?string $namespace = null): array
     {
+        $filters = MetadataFilter::normalize($filters);
         $bindings = [$this->vector($vector), $namespace ?? 'default'];
         $where = 'namespace = ?';
 
         foreach ($filters as $key => $value) {
+            if ($value === null) {
+                $where .= " AND metadata ? ? AND metadata -> ? = 'null'::jsonb";
+                $bindings[] = (string) $key;
+                $bindings[] = (string) $key;
+                continue;
+            }
+
             $where .= ' AND metadata ->> ? = ?';
             $bindings[] = (string) $key;
-            $bindings[] = is_scalar($value) || $value === null
-                ? (string) $value
-                : json_encode($value, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            $bindings[] = (string) $value;
         }
 
         $rows = $this->connection->select(

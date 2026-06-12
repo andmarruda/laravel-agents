@@ -29,11 +29,25 @@ use Andmarruda\LaravelAgents\Observability\Stores\NullTraceStore;
 use Andmarruda\LaravelAgents\Observability\Support\CostCalculator;
 use Andmarruda\LaravelAgents\Observability\Support\LaravelEventDispatcher;
 use Andmarruda\LaravelAgents\Observability\TraceManager;
+use Andmarruda\LaravelAgents\RAG\Chunking\ChunkingStrategyRouter;
+use Andmarruda\LaravelAgents\RAG\Chunking\CodeChunker;
 use Andmarruda\LaravelAgents\RAG\Chunking\RecursiveCharacterChunker;
+use Andmarruda\LaravelAgents\RAG\Chunking\SemanticTextChunker;
+use Andmarruda\LaravelAgents\RAG\Chunking\PhpCodeChunker;
 use Andmarruda\LaravelAgents\RAG\Contracts\Chunker;
+use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingCache;
 use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
+use Andmarruda\LaravelAgents\RAG\Contracts\MetadataSchema;
+use Andmarruda\LaravelAgents\RAG\Contracts\IndexingCheckpointStore;
 use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
+use Andmarruda\LaravelAgents\RAG\Embeddings\InMemoryEmbeddingCache;
+use Andmarruda\LaravelAgents\RAG\Embeddings\LaravelEmbeddingCache;
 use Andmarruda\LaravelAgents\RAG\Embeddings\EmbeddingRouter;
+use Andmarruda\LaravelAgents\RAG\Metadata\StrictMetadataSchema;
+use Andmarruda\LaravelAgents\RAG\Jobs\LaravelIndexingCheckpointStore;
+use Andmarruda\LaravelAgents\RAG\Data\IndexingLimits;
+use Andmarruda\LaravelAgents\RAG\Tools\ZeroResultPolicy;
+use Andmarruda\LaravelAgents\RAG\Tools\RetrieverTool;
 use Andmarruda\LaravelAgents\RAG\RagIndexer;
 use Andmarruda\LaravelAgents\RAG\Retriever;
 use Andmarruda\LaravelAgents\RAG\VectorStores\InMemoryVectorStore;
@@ -162,7 +176,20 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             return new EmbeddingRouter(
                 $app['config']->get('agents', []),
                 $app->make(\Illuminate\Http\Client\Factory::class),
+                $app->make(EmbeddingCache::class),
             );
+        });
+
+        $this->app->singleton(EmbeddingCache::class, function ($app) {
+            $driver = $app['config']->get('agents.rag.embeddings.cache.driver', 'memory');
+
+            return $driver === 'laravel'
+                ? new LaravelEmbeddingCache(
+                    $app->make('cache.store'),
+                    (string) $app['config']->get('agents.rag.embeddings.cache.prefix', 'agents:rag:embeddings:'),
+                    $app['config']->get('agents.rag.embeddings.cache.ttl'),
+                )
+                : new InMemoryEmbeddingCache();
         });
 
         $this->app->singleton(InMemoryVectorStore::class, fn () => new InMemoryVectorStore());
@@ -171,11 +198,48 @@ class LaravelAgentsServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(Chunker::class, function ($app) {
-            return new RecursiveCharacterChunker(
-                (int) $app['config']->get('agents.rag.chunking.size', 1000),
-                (int) $app['config']->get('agents.rag.chunking.overlap', 150),
+            $size = (int) $app['config']->get('agents.rag.chunking.size', 1000);
+            $overlap = (int) $app['config']->get('agents.rag.chunking.overlap', 150);
+            $custom = $app['config']->get('agents.rag.chunking.strategies', []);
+
+            return new ChunkingStrategyRouter(
+                strategies: [
+                    'recursive' => new RecursiveCharacterChunker($size, $overlap),
+                    'semantic' => new SemanticTextChunker($size, $overlap),
+                    'code' => new CodeChunker(max($size, 2000), min($overlap, 100)),
+                    'php' => new PhpCodeChunker(max($size, 2000), min($overlap, 100)),
+                    ...$custom,
+                ],
+                default: (string) $app['config']->get('agents.rag.chunking.default', 'semantic'),
+                extensions: $app['config']->get('agents.rag.chunking.extensions', []),
+                mimeTypes: $app['config']->get('agents.rag.chunking.mime_types', []),
+                container: $app,
             );
         });
+
+        $this->app->singleton(MetadataSchema::class, fn ($app) => new StrictMetadataSchema(
+            $app['config']->get('agents.rag.metadata.fields', []),
+            (bool) $app['config']->get('agents.rag.metadata.allow_unknown', true),
+            (bool) $app['config']->get('agents.rag.metadata.allow_nested', false),
+        ));
+        $this->app->singleton(IndexingCheckpointStore::class, fn ($app) => new LaravelIndexingCheckpointStore(
+            $app->make('cache.store'),
+            (string) $app['config']->get('agents.rag.queue.checkpoint_prefix', 'agents:rag:indexing:'),
+            (int) $app['config']->get('agents.rag.queue.checkpoint_ttl', 86400),
+        ));
+        $this->app->singleton(IndexingLimits::class, fn ($app) => new IndexingLimits(
+            (int) $app['config']->get('agents.rag.limits.max_document_bytes', 10_485_760),
+            (int) $app['config']->get('agents.rag.limits.max_extracted_text_bytes', 10_485_760),
+            (int) $app['config']->get('agents.rag.limits.max_chunks_per_document', 10_000),
+            (int) $app['config']->get('agents.rag.limits.max_chunk_bytes', 100_000),
+        ));
+        $this->app->bind(ZeroResultPolicy::class, fn ($app) => new ZeroResultPolicy(
+            (string) $app['config']->get('agents.rag.retrieval.zero_result_policy', 'explicit_empty'),
+        ));
+        $this->app->bind(RetrieverTool::class, fn ($app) => new RetrieverTool(
+            $app->make(Retriever::class),
+            zeroResultPolicy: $app->make(ZeroResultPolicy::class),
+        ));
 
         $this->app->bind(EmbeddingProvider::class, fn ($app) => $app->make(EmbeddingRouter::class)->for());
         $this->app->bind(VectorStore::class, fn ($app) => $app->make(VectorStoreRouter::class)->for());
@@ -183,10 +247,17 @@ class LaravelAgentsServiceProvider extends ServiceProvider
             $app->make(Chunker::class),
             $app->make(EmbeddingProvider::class),
             $app->make(VectorStore::class),
+            (int) $app['config']->get('agents.rag.embeddings.batch_size', 100),
+            $app->make(MetadataSchema::class),
+            $app->make(IndexingLimits::class),
+            $app->make(TraceManager::class),
         ));
         $this->app->bind(Retriever::class, fn ($app) => new Retriever(
             $app->make(EmbeddingProvider::class),
             $app->make(VectorStore::class),
+            (int) $app['config']->get('agents.rag.retrieval.limit', 5),
+            minimumScore: $app['config']->get('agents.rag.retrieval.minimum_score'),
+            traces: $app->make(TraceManager::class),
         ));
 
         $this->app->singleton(LaravelAgentsManager::class, function ($app) {
@@ -201,6 +272,10 @@ class LaravelAgentsServiceProvider extends ServiceProvider
                 $app->make(Chunker::class),
                 $app->make(GuardrailPipeline::class),
                 $app->make(ApprovalStore::class),
+                $app->make(MetadataSchema::class),
+                $app['config']->get('agents.rag.retrieval.minimum_score'),
+                (int) $app['config']->get('agents.rag.embeddings.batch_size', 100),
+                $app->make(IndexingLimits::class),
             );
         });
 

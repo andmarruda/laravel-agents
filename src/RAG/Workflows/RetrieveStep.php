@@ -24,7 +24,8 @@ class RetrieveStep implements Step
 
         $limit = is_array($input) && isset($input['limit']) ? (int) $input['limit'] : null;
         $filters = is_array($input) && is_array($input['filters'] ?? null) ? $input['filters'] : [];
+        $minimumScore = is_array($input) && isset($input['minimum_score']) ? (float) $input['minimum_score'] : null;
 
-        return array_map(fn ($result) => $result->toArray(), $this->retriever->retrieve($query, $limit, $filters));
+        return array_map(fn ($result) => $result->toArray(), $this->retriever->retrieve($query, $limit, $filters, $minimumScore));
     }
 }

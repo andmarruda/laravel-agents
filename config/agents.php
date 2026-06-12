@@ -99,11 +99,55 @@ return [
                 : null,
             'batch_size' => (int) env('AGENTS_RAG_EMBEDDING_BATCH_SIZE', 100),
             'timeout' => (int) env('AGENTS_RAG_EMBEDDING_TIMEOUT', 60),
+            'cache' => [
+                'enabled' => env('AGENTS_RAG_EMBEDDING_CACHE', true),
+                'driver' => env('AGENTS_RAG_EMBEDDING_CACHE_DRIVER', 'memory'),
+                'prefix' => 'agents:rag:embeddings:',
+                'ttl' => null,
+                'version' => '1',
+            ],
         ],
 
         'chunking' => [
+            'default' => env('AGENTS_RAG_CHUNKING_STRATEGY', 'semantic'),
             'size' => (int) env('AGENTS_RAG_CHUNK_SIZE', 1000),
             'overlap' => (int) env('AGENTS_RAG_CHUNK_OVERLAP', 150),
+            'extensions' => [
+                'php' => 'php', 'js' => 'code', 'ts' => 'code', 'py' => 'code',
+                'java' => 'code', 'go' => 'code', 'rs' => 'code', 'md' => 'semantic',
+            ],
+            'mime_types' => [
+                'text/x-php' => 'php',
+                'application/javascript' => 'code',
+                'text/markdown' => 'semantic',
+            ],
+            'strategies' => [],
+        ],
+
+        'retrieval' => [
+            'limit' => (int) env('AGENTS_RAG_RETRIEVAL_LIMIT', 5),
+            'minimum_score' => env('AGENTS_RAG_MINIMUM_SCORE') !== null
+                ? (float) env('AGENTS_RAG_MINIMUM_SCORE')
+                : null,
+            'zero_result_policy' => env('AGENTS_RAG_ZERO_RESULT_POLICY', 'explicit_empty'),
+        ],
+
+        'metadata' => [
+            'fields' => [],
+            'allow_unknown' => true,
+            'allow_nested' => true,
+        ],
+
+        'queue' => [
+            'checkpoint_prefix' => 'agents:rag:indexing:',
+            'checkpoint_ttl' => 86400,
+        ],
+
+        'limits' => [
+            'max_document_bytes' => (int) env('AGENTS_RAG_MAX_DOCUMENT_BYTES', 10_485_760),
+            'max_extracted_text_bytes' => (int) env('AGENTS_RAG_MAX_EXTRACTED_TEXT_BYTES', 10_485_760),
+            'max_chunks_per_document' => (int) env('AGENTS_RAG_MAX_CHUNKS_PER_DOCUMENT', 10_000),
+            'max_chunk_bytes' => (int) env('AGENTS_RAG_MAX_CHUNK_BYTES', 100_000),
         ],
 
         'vector_store' => [

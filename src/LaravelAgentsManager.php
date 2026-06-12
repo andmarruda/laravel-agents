@@ -15,6 +15,10 @@ use Andmarruda\LaravelAgents\Ports\ModelPort;
 use Andmarruda\LaravelAgents\RAG\Contracts\Chunker;
 use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
 use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
+use Andmarruda\LaravelAgents\RAG\Contracts\MetadataSchema;
+use Andmarruda\LaravelAgents\RAG\Contracts\DocumentLoader;
+use Andmarruda\LaravelAgents\RAG\Jobs\IndexDocumentLoaderJob;
+use Andmarruda\LaravelAgents\RAG\Data\IndexingLimits;
 use Andmarruda\LaravelAgents\RAG\Embeddings\EmbeddingRouter;
 use Andmarruda\LaravelAgents\RAG\RagIndexer;
 use Andmarruda\LaravelAgents\RAG\Retriever;
@@ -42,6 +46,10 @@ class LaravelAgentsManager
         protected ?Chunker $chunker = null,
         protected ?GuardrailPipeline $guardrailPipeline = null,
         protected ?ApprovalStore $approvalStore = null,
+        protected ?MetadataSchema $metadataSchema = null,
+        protected ?float $minimumScore = null,
+        protected int $embeddingBatchSize = 100,
+        protected ?IndexingLimits $indexingLimits = null,
     ) {
     }
 
@@ -100,7 +108,33 @@ class LaravelAgentsManager
             $this->chunker ?? throw new \RuntimeException('RAG chunker is not configured.'),
             $this->embeddings($embeddingModel),
             $this->vectorStore($vectorStore),
+            $this->embeddingBatchSize,
+            $this->metadataSchema,
+            $this->indexingLimits,
+            $this->traceManager,
         );
+    }
+
+    public function indexAsync(
+        DocumentLoader $loader,
+        ?string $namespace = null,
+        ?string $embeddingModel = null,
+        ?string $vectorStore = null,
+        ?string $queue = null,
+        int $batchDocuments = 25,
+    ): mixed {
+        if (! function_exists('app') || ! app()->bound('bus')) {
+            throw new \RuntimeException('Laravel bus is required for asynchronous RAG indexing.');
+        }
+
+        return app('bus')->dispatch(new IndexDocumentLoaderJob(
+            $loader,
+            $namespace,
+            $embeddingModel,
+            $vectorStore,
+            $batchDocuments,
+            $queue,
+        ));
     }
 
     public function retriever(?string $embeddingModel = null, ?string $vectorStore = null, ?string $namespace = null): Retriever
@@ -109,6 +143,8 @@ class LaravelAgentsManager
             $this->embeddings($embeddingModel),
             $this->vectorStore($vectorStore),
             namespace: $namespace,
+            minimumScore: $this->minimumScore,
+            traces: $this->traceManager,
         );
     }
 

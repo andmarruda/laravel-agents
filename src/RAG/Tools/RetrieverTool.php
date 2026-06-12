@@ -12,6 +12,8 @@ class RetrieverTool implements Tool
         protected Retriever $retriever,
         protected string $toolName = 'retrieve_context',
         protected string $toolDescription = 'Retrieve relevant context from the configured knowledge base.',
+        protected bool $explicitEmptyResult = true,
+        protected ?ZeroResultPolicy $zeroResultPolicy = null,
     ) {
     }
 
@@ -33,6 +35,7 @@ class RetrieverTool implements Tool
                 'query' => ['type' => 'string'],
                 'limit' => ['type' => 'integer', 'minimum' => 1],
                 'filters' => ['type' => 'object'],
+                'minimum_score' => ['type' => 'number', 'minimum' => -1, 'maximum' => 1],
             ],
             'required' => ['query'],
         ];
@@ -48,7 +51,12 @@ class RetrieverTool implements Tool
             $input['query'],
             isset($input['limit']) ? (int) $input['limit'] : null,
             is_array($input['filters'] ?? null) ? $input['filters'] : [],
+            isset($input['minimum_score']) ? (float) $input['minimum_score'] : null,
         );
+
+        if ($results === [] && $this->explicitEmptyResult) {
+            return ($this->zeroResultPolicy ?? new ZeroResultPolicy())->handle($input['query']);
+        }
 
         return array_map(fn ($result) => $result->toArray(), $results);
     }

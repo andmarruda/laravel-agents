@@ -80,6 +80,19 @@ Goal: policy, validation, and safety around model calls and tool execution.
 - JSON schema validation.
 - Retry/correction loops for invalid model output.
 
+## v0.8 RAG Reliability And Efficiency
+
+Goal: improve production RAG relevance, indexing cost, and resilience.
+
+- Content-aware and application-defined chunking strategies.
+- Incremental indexing with a content-hash embedding cache.
+- Configurable similarity thresholds and explicit zero-result behavior.
+- Laravel queue integration with retries, progress events, and resumable indexing.
+- Streaming large-file processing without silent truncation.
+- Metadata schema enforcement and portable vector-store filters.
+
+See [0.8-PLAN.md](0.8-PLAN.md) for the detailed implementation plan and open design questions.
+
 ## v1.0 Production API
 
 Goal: stable public API for real Laravel apps.

@@ -6,6 +6,7 @@ use Andmarruda\LaravelAgents\RAG\Contracts\VectorStore;
 use Andmarruda\LaravelAgents\RAG\Data\SearchResult;
 use Andmarruda\LaravelAgents\RAG\Data\VectorRecord;
 use Andmarruda\LaravelAgents\RAG\Support\VectorMath;
+use Andmarruda\LaravelAgents\RAG\Metadata\MetadataFilter;
 
 class InMemoryVectorStore implements VectorStore
 {
@@ -40,6 +41,7 @@ class InMemoryVectorStore implements VectorStore
 
     public function search(array $vector, int $limit = 5, array $filters = [], ?string $namespace = null): array
     {
+        $filters = MetadataFilter::normalize($filters);
         $records = array_filter(
             $this->records[$namespace ?? 'default'] ?? [],
             fn (VectorRecord $record) => $this->matches($record->metadata, $filters),

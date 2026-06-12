@@ -19,6 +19,7 @@ This package is in early alpha. The current implementation is intentionally focu
 - Production observability with traces, spans, model usage, cost metadata, lifecycle events, storage, and optional JSON dashboard routes.
 - Input, output, and tool guardrails with validation, correction retries, permissions, redaction, and human approval.
 - Retrieval-augmented generation with loaders, deterministic chunking, OpenAI embeddings, pgvector, Qdrant, retriever tools, and workflow steps.
+- Production RAG with content-aware chunking, embedding cache, relevance thresholds, queued indexing, streaming loaders, and metadata validation.
 - Ports & Adapters boundary for model providers.
 - Laravel package auto-discovery and publishable config.
 

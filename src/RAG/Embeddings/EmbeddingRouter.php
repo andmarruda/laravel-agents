@@ -3,6 +3,7 @@
 namespace Andmarruda\LaravelAgents\RAG\Embeddings;
 
 use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingProvider;
+use Andmarruda\LaravelAgents\RAG\Contracts\EmbeddingCache;
 use Illuminate\Http\Client\Factory;
 use InvalidArgumentException;
 
@@ -14,6 +15,7 @@ class EmbeddingRouter
     public function __construct(
         protected array $config,
         protected ?Factory $http = null,
+        protected ?EmbeddingCache $cache = null,
     ) {
     }
 
@@ -28,7 +30,7 @@ class EmbeddingRouter
         [$provider, $modelName] = explode('/', $model, 2);
         $settings = $this->config['rag']['embeddings'] ?? [];
 
-        return match ($provider) {
+        $embeddingProvider = match ($provider) {
             'openai' => new OpenAiEmbeddingProvider(
                 model: $modelName,
                 config: $this->config['providers']['openai'] ?? [],
@@ -39,5 +41,9 @@ class EmbeddingRouter
             ),
             default => throw new InvalidArgumentException("Unsupported embedding provider [{$provider}]."),
         };
+
+        return $this->cache && ($settings['cache']['enabled'] ?? true)
+            ? new CachedEmbeddingProvider($embeddingProvider, $this->cache, (string) ($settings['cache']['version'] ?? '1'))
+            : $embeddingProvider;
     }
 }
